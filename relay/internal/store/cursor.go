@@ -32,6 +32,30 @@ func (s *Store) Cursor(ctx context.Context, defaultStart uint64) (uint64, error)
 	return uint64(last), nil
 }
 
+// AbelCursor returns the last scanned Abelian block height, or defaultStart
+// when the row does not exist yet.
+func (s *Store) AbelCursor(ctx context.Context, defaultStart int64) (int64, error) {
+	var last int64
+	err := s.pool.QueryRow(ctx,
+		`SELECT last_scanned_height FROM abel_cursor WHERE id = 1`).Scan(&last)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return defaultStart, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return last, nil
+}
+
+// SetAbelCursor advances the Abelian scan cursor.
+func (s *Store) SetAbelCursor(ctx context.Context, height int64) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO abel_cursor (id, last_scanned_height) VALUES (1, $1)
+		ON CONFLICT (id) DO UPDATE SET last_scanned_height = EXCLUDED.last_scanned_height`,
+		height)
+	return err
+}
+
 // CreateJobsAndAdvanceCursor inserts the scanned commits (ON CONFLICT DO
 // NOTHING — idempotent under rescans) and advances the poller cursor, all in
 // ONE transaction (spec §7.1: crash between the two must be impossible).

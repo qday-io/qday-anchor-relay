@@ -1,5 +1,13 @@
 SHELL := /bin/bash
 
+# Local Go builds need the cryptosuite liboqs FORK via pkg-config (CGO).
+# Set LIBOQS_PREFIX to your install prefix; see README "Building liboqs".
+LIBOQS_PREFIX ?=
+ifneq ($(LIBOQS_PREFIX),)
+export PKG_CONFIG_PATH := $(LIBOQS_PREFIX)/lib/pkgconfig:$(PKG_CONFIG_PATH)
+export CGO_LDFLAGS := -Wl,-rpath,$(LIBOQS_PREFIX)/lib
+endif
+
 .PHONY: up down logs migrate test test-relay test-contracts abigen portal-dev
 
 up:
