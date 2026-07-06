@@ -26,11 +26,13 @@ test-contracts:
 # Regenerate the Go binding for QDayAnchorRegistry from the Foundry build artifact.
 abigen:
 	cd contracts && forge build
-	jq -r '.abi' contracts/out/QDayAnchorRegistry.sol/QDayAnchorRegistry.json > contracts/out/QDayAnchorRegistry.abi.json
-	go run github.com/ethereum/go-ethereum/cmd/abigen@v1.14.13 \
-		--abi contracts/out/QDayAnchorRegistry.abi.json \
+	cd contracts && forge inspect src/QDayAnchorRegistry.sol:QDayAnchorRegistry abi --json > out/QDayAnchorRegistry.abi.json
+	cd contracts && forge inspect src/QDayAnchorRegistry.sol:QDayAnchorRegistry bytecode > out/QDayAnchorRegistry.bin
+	cd relay && go run github.com/ethereum/go-ethereum/cmd/abigen@v1.14.13 \
+		--abi ../contracts/out/QDayAnchorRegistry.abi.json \
+		--bin ../contracts/out/QDayAnchorRegistry.bin \
 		--pkg registry --type QDayAnchorRegistry \
-		--out relay/internal/registry/qday_anchor_registry.go
+		--out internal/registry/qday_anchor_registry.go
 
 portal-dev:
 	cd portal && npm run dev
