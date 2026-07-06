@@ -9,6 +9,7 @@ services:
       PORTAL_DB_PASSWORD: ${PORTAL_DB_PASSWORD:-change-me}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./deploy/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-anchor} -d ${POSTGRES_DB:-anchor}"]
       interval: 5s
