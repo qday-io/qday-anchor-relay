@@ -5,3 +5,4 @@ contracts/out/
 contracts/cache/
 relay/bin/
 portal/.next/
+contracts/lib/
