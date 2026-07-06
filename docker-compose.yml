@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-anchor}
+      POSTGRES_USER: ${POSTGRES_USER:-anchor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      PORTAL_DB_USER: ${PORTAL_DB_USER:-portal_ro}
+      PORTAL_DB_PASSWORD: ${PORTAL_DB_PASSWORD:-change-me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-anchor} -d ${POSTGRES_DB:-anchor}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: migrate/migrate:v4.18.1
+    volumes:
+      - ./relay/migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER:-anchor}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-anchor}?sslmode=disable"
+      - "up"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  relay:
+    build:
+      context: ./relay
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  portal:
+    build:
+      context: ./portal
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+    ports:
+      - "${PORTAL_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
