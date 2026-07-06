@@ -39,16 +39,17 @@ type Registry struct {
 }
 
 type Abel struct {
-	Network        string // mainnet | testnet | regressionnet | simnet
-	RPCEndpoint    string
-	RPCUser        string
-	RPCPass        string
-	TLSCertPath    string
-	ConfirmDepth   int64
-	WalletMnemonic string
-	WalletKeyFile  string
-	AccountPrivacy string // pseudonymous | full-privacy
-	TxFeeNeutrino  int64
+	Network         string // mainnet | testnet | regressionnet | simnet
+	RPCEndpoint     string
+	RPCUser         string
+	RPCPass         string
+	TLSCertPath     string
+	ConfirmDepth    int64
+	ScanStartHeight int64
+	WalletMnemonic  string
+	WalletKeyFile   string
+	AccountPrivacy  string // pseudonymous | full-privacy
+	TxFeeNeutrino   int64
 }
 
 type Config struct {
@@ -58,7 +59,6 @@ type Config struct {
 	Abel             Abel
 	RetryMax         int
 	RetryBackoffBase time.Duration
-	MemoPrefix       string
 }
 
 var validNetworks = map[string]bool{
@@ -125,20 +125,20 @@ func Load(getenv Getenv) (*Config, error) {
 			RelayerPrivateKey: require("RELAYER_PRIVATE_KEY"),
 		},
 		Abel: Abel{
-			Network:        optional("ABEL_NETWORK", "testnet"),
-			RPCEndpoint:    require("ABEL_RPC_ENDPOINT"),
-			RPCUser:        getenv("ABEL_RPC_USER"),
-			RPCPass:        getenv("ABEL_RPC_PASS"),
-			TLSCertPath:    getenv("ABEL_RPC_TLS_CERT_PATH"),
-			ConfirmDepth:   parseInt("ABEL_CONFIRM_DEPTH", "6", 64),
-			WalletMnemonic: strings.TrimSpace(getenv("ABEL_WALLET_MNEMONIC")),
-			WalletKeyFile:  strings.TrimSpace(getenv("ABEL_WALLET_KEY_FILE")),
-			AccountPrivacy: optional("ABEL_ACCOUNT_PRIVACY", "pseudonymous"),
-			TxFeeNeutrino:  parseInt("ABEL_TX_FEE_NEUTRINO", "1000000", 64),
+			Network:         optional("ABEL_NETWORK", "testnet"),
+			RPCEndpoint:     require("ABEL_RPC_ENDPOINT"),
+			RPCUser:         getenv("ABEL_RPC_USER"),
+			RPCPass:         getenv("ABEL_RPC_PASS"),
+			TLSCertPath:     getenv("ABEL_RPC_TLS_CERT_PATH"),
+			ConfirmDepth:    parseInt("ABEL_CONFIRM_DEPTH", "6", 64),
+			ScanStartHeight: parseInt("ABEL_SCAN_START_HEIGHT", "0", 64),
+			WalletMnemonic:  strings.TrimSpace(getenv("ABEL_WALLET_MNEMONIC")),
+			WalletKeyFile:   strings.TrimSpace(getenv("ABEL_WALLET_KEY_FILE")),
+			AccountPrivacy:  optional("ABEL_ACCOUNT_PRIVACY", "pseudonymous"),
+			TxFeeNeutrino:   parseInt("ABEL_TX_FEE_NEUTRINO", "1000000", 64),
 		},
 		RetryMax:         int(parseInt("RETRY_MAX", "5", 32)),
 		RetryBackoffBase: time.Duration(parseInt("RETRY_BACKOFF_BASE_SECONDS", "30", 64)) * time.Second,
-		MemoPrefix:       optional("MEMO_PREFIX", "QDAY2ANCHOR"),
 	}
 
 	if cfg.DA.ChainID == 0 {

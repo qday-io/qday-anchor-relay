@@ -28,7 +28,7 @@ func TestCanTransition_AllowedMatrix(t *testing.T) {
 
 func TestCanTransition_ForbiddenSamples(t *testing.T) {
 	forbidden := []struct{ from, to Status }{
-		{StatusPending, StatusAbelConfirmed},       // 不可跳過 submit
+		{StatusPending, StatusAbelConfirmed}, // 不可跳過 submit
 		{StatusPending, StatusContractRecorded},
 		{StatusPending, StatusDone},
 		{StatusAbelSubmitted, StatusContractRecorded},
@@ -36,7 +36,7 @@ func TestCanTransition_ForbiddenSamples(t *testing.T) {
 		{StatusAbelConfirmed, StatusDone},
 		{StatusAbelConfirmed, StatusPending},
 		{StatusAbelConfirmed, StatusAbelSubmitted},
-		{StatusDone, StatusPending},                 // 終態不可離開
+		{StatusDone, StatusPending}, // 終態不可離開
 		{StatusDone, StatusFailed},
 		{StatusFailed, StatusPending},
 		{StatusFailed, StatusDone},

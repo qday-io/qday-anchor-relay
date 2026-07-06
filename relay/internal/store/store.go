@@ -65,6 +65,7 @@ type Coin struct {
 	BlockHeight   int64
 	RingID        string
 	RingIndex     int16
+	SerialNumber  string // hex; filled once the coin's ring group is complete
 	Status        CoinStatus
 	SpentByJob    *int64
 }

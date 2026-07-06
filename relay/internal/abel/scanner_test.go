@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 
 	abelian "github.com/pqabelian/abelian-sdk-go-v2/abelian"
@@ -38,14 +39,17 @@ func (f *fakeChain) Block(id string) (*abelian.Block, error) {
 func (f *fakeChain) RawTx(txID string) (*abelian.Tx, error) {
 	tx, ok := f.txs[txID]
 	if !ok {
-		return nil, fmt.Errorf("no tx %s", txID)
+		// Mirror the real node: an unknown tx is a JSON-RPC level error.
+		return nil, &abelian.RPCError{Code: -5, Message: "No information available about transaction " + txID}
 	}
 	return tx, nil
 }
 
 func (f *fakeChain) SendSignedTx(rawHex string) (string, error) { return "sent-tx", nil }
-func (f *fakeChain) RingBlockGroup(h int64) ([][]byte, error)   { return nil, fmt.Errorf("not implemented") }
-func (f *fakeChain) MempoolTxIDs() ([]string, error)            { return nil, nil }
+func (f *fakeChain) RingBlockGroup(h int64) ([][]byte, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (f *fakeChain) MempoolTxIDs() ([]string, error) { return nil, nil }
 
 // fakeReceiver claims ownership of outputs whose script data starts with "mine".
 type fakeReceiver struct{}
@@ -57,15 +61,49 @@ func (fakeReceiver) ReceiveCoin(txVersion uint32, txOutData []byte) (bool, uint6
 	return false, 0, nil
 }
 
+func (fakeReceiver) GenerateSerialNumberWithRing(coinID *abelian.CoinID, serializedRing []byte) ([]byte, error) {
+	return []byte("serial-" + coinID.String()), nil
+}
+
 type fakeCoinSink struct {
-	coins  []CoinRow
-	cursor int64
-	has    bool
+	coins   []CoinRow
+	serials map[string]string // coinID → serialHex
+	spent   []string          // serials marked spent
+	cursor  int64
+	has     bool
 }
 
 func (f *fakeCoinSink) UpsertUnspentCoin(ctx context.Context, c CoinRow) error {
 	f.coins = append(f.coins, c)
 	return nil
+}
+
+func (f *fakeCoinSink) CoinsMissingSerial(ctx context.Context, upToHeight int64) ([]CoinRow, error) {
+	var out []CoinRow
+	for _, c := range f.coins {
+		if _, ok := f.serials[c.CoinID]; !ok && c.BlockHeight <= upToHeight {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeCoinSink) SetCoinSerial(ctx context.Context, coinID, serialHex, ringID string, ringIndex int16) error {
+	if f.serials == nil {
+		f.serials = map[string]string{}
+	}
+	f.serials[coinID] = serialHex
+	return nil
+}
+
+func (f *fakeCoinSink) MarkCoinSpentBySerial(ctx context.Context, serialHex string) (bool, error) {
+	f.spent = append(f.spent, serialHex)
+	for _, s := range f.serials {
+		if s == serialHex {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (f *fakeCoinSink) AbelCursor(ctx context.Context, def int64) (int64, error) {
@@ -115,7 +153,7 @@ func TestScanner_FindsOwnCoinsSkipsCoinbase(t *testing.T) {
 		},
 	}
 	sink := &fakeCoinSink{}
-	s := NewScanner(chain, fakeReceiver{}, sink, 0, scanLog)
+	s := NewScanner(chain, fakeReceiver{}, sink, &fakeRings{err: ErrRingNotReady}, 0, scanLog)
 
 	if err := s.ScanOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -139,7 +177,7 @@ func TestScanner_ResumesFromCursor(t *testing.T) {
 		txs:    map[string]*abelian.Tx{},
 	}
 	sink := &fakeCoinSink{cursor: 2, has: true}
-	s := NewScanner(chain, fakeReceiver{}, sink, 0, scanLog)
+	s := NewScanner(chain, fakeReceiver{}, sink, &fakeRings{err: ErrRingNotReady}, 0, scanLog)
 	// Blocks 1-2 absent from the fake — touching them would error, proving
 	// the scanner resumed at 3.
 	if err := s.ScanOnce(context.Background()); err != nil {
@@ -157,12 +195,79 @@ func TestScanner_BoundedCatchUp(t *testing.T) {
 	}
 	chain := &fakeChain{height: maxBlocksPerScanTick + 10, blocks: blocks, txs: map[string]*abelian.Tx{}}
 	sink := &fakeCoinSink{}
-	s := NewScanner(chain, fakeReceiver{}, sink, 0, scanLog)
+	s := NewScanner(chain, fakeReceiver{}, sink, &fakeRings{err: ErrRingNotReady}, 0, scanLog)
 
 	if err := s.ScanOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if sink.cursor != maxBlocksPerScanTick {
 		t.Errorf("cursor after one tick = %d, want %d", sink.cursor, maxBlocksPerScanTick)
+	}
+}
+
+func TestScanner_BackfillsSerialAndDetectsSpend(t *testing.T) {
+	mine := hex.EncodeToString([]byte("mine-coin-data"))
+	hexTx := strings.Repeat("aa", 32) // ring serialization hex-decodes tx ids
+
+	// Height chosen at a ring-group boundary: find h in [1,10] with h%n==n-1.
+	var boundary int64 = -1
+	for h := int64(1); h <= 10; h++ {
+		n := int64(abelian.GetBlockNumPerRingGroupByBlockHeight(h))
+		if n > 0 && h%n == n-1 {
+			boundary = h
+			break
+		}
+	}
+	if boundary < 0 {
+		t.Skip("no ring group boundary in test range")
+	}
+
+	blocks := map[int64]*abelian.Block{}
+	txs := map[string]*abelian.Tx{}
+	for h := int64(1); h <= boundary; h++ {
+		blocks[h] = mkBlock(h, fmt.Sprintf("cb%d", h))
+	}
+	coinHeight := min(int64(1), boundary)
+	blocks[coinHeight] = mkBlock(coinHeight, fmt.Sprintf("cb%d", coinHeight), hexTx)
+	txs[hexTx] = mkTx(hexTx, mine)
+
+	chain := &fakeChain{height: boundary, blocks: blocks, txs: txs}
+	sink := &fakeCoinSink{}
+	coin := &SpendableCoin{TxHash: hexTx, OutIndex: 0, BlockHeight: coinHeight}
+	s := NewScanner(chain, fakeReceiver{}, sink, &fakeRings{ring: minimalRing(t, coin)}, 0, scanLog)
+
+	// Real ring serialization needs genuine chain data — stub the seams.
+	origSerialize, origRingID := serializeRing, ringIDOf
+	serializeRing = func(ring *abelian.CoinRing) ([]byte, error) { return []byte("ring-bytes"), nil }
+	ringIDOf = func(ring *abelian.CoinRing) (string, error) { return "ring-id-1", nil }
+	t.Cleanup(func() { serializeRing, ringIDOf = origSerialize, origRingID })
+
+	if err := s.ScanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wantSerial := hex.EncodeToString([]byte("serial-" + hexTx + ":0"))
+	if got := sink.serials[hexTx+":0"]; got != wantSerial {
+		t.Fatalf("serial = %q, want %q (serials=%v)", got, wantSerial, sink.serials)
+	}
+
+	// Next block spends it: Vin carries the serial.
+	spendH := boundary + 1
+	chain.height = spendH
+	chain.blocks[spendH] = mkBlock(spendH, fmt.Sprintf("cb%d", spendH), "spendtx")
+	spendTx := mkTx("spendtx")
+	spendTx.Vin = []*abelian.TxVin{{SerialNumber: wantSerial}}
+	chain.txs["spendtx"] = spendTx
+
+	if err := s.ScanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, sp := range sink.spent {
+		if sp == wantSerial {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("spend not detected; spent=%v", sink.spent)
 	}
 }

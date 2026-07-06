@@ -42,7 +42,13 @@ func (p *Poller) ScanOnce(ctx context.Context) error {
 	}
 	safeHead := latest - p.confirmDepth
 
-	cursor, err := p.sink.Cursor(ctx, p.startBlock)
+	// The cursor is "last scanned block"; seed it one below the configured
+	// start so DA_START_BLOCK itself is included in the first scan.
+	firstBoot := p.startBlock
+	if firstBoot > 0 {
+		firstBoot--
+	}
+	cursor, err := p.sink.Cursor(ctx, firstBoot)
 	if err != nil {
 		return fmt.Errorf("da: load cursor: %w", err)
 	}

@@ -114,13 +114,20 @@ Relay（Go `relay/internal/anchor`）與 Portal（TS `portal/lib/memo.ts`）各�
   但 `NewRootSeedAccount` 收 `(spend, sn, value=view, detector)` —— wallet loader 已做 remap，勿「修正」。
 - **Memo 賦值**：`NewTxDescWithRing` 建構子無 memo 參數，需對 `TxDesc.TxMemo` 欄位賦值（spec F1）。
 - **portal_ro 角色**：密碼不能寫死在 migration SQL，改由 `deploy/initdb/01-portal-ro.sh`
-  （讀環境變數）建角色；migration 0002 只負責 GRANT（含 default privileges）。
-- **abel_cursor（migration 0003）**：spec schema 之外新增的 Abelian 掃描游標表，
-  與 DA 側 `poller_cursor` 對稱，同為 crash-safe 續掃所需。
+  （讀環境變數）建角色；migration 0002 只負責 GRANT（既有 cluster 的 fallback 角色為
+  NOLOGIN，需 ops 手動設密碼）。
+- **abel_cursor（migration 0003）／serial_number（migration 0004）**：spec schema 之外的
+  兩個擴充——Abelian 掃描游標（crash-safe 續掃），與 coin serial number 欄位（鏈上花費
+  偵測，對照 `examples/coin` 的 TrackCoins）。
 - **Coinbase output 不掃**：relay 錢包預期由轉帳注資；跳過 coinbase 同時避開 200 塊成熟期（F11）。
   若必須用挖礦資金，需另外處理成熟期。
-- **Ring/serial 不落地**：花費時從鏈上重建（`GetRingBlockGroupByHeight` → `BuildCoinRings`），
-  保持 DB schema 與 spec 一致、重啟後無需修復狀態。ring block group 未湊齊時回報 retry。
+- **Ring 花費時重建、serial 落地**：花費用的 ring 從鏈上重建（`GetRingBlockGroupByHeight`
+  → `BuildCoinRings`）；serial number 於 ring group 湊齊時由 scanner 產生並回填 DB，
+  供 Vin serial 比對偵測花費。ring block group 未湊齊時回報 wait（不消耗 retry 額度）。
+- **交易遺失復原**：confirmer 區分「節點回覆查無此交易」與傳輸層錯誤（後者只重試不重送）；
+  判定遺失後 job 回退 PENDING 且該 job 花掉的 coin 復活回 UNSPENT。
+- **廣播前先落 txid**：簽名後、送出前即把本地算出的 txid 寫入 job，廣播窗口內 crash
+  不會造成重複送出；重啟時殘留的 LOCKED coin 由 submitter 對帳（已上鏈→SPENT，未上鏈→釋放）。
 - **單輸入單找零**：submitter 永遠 1 in / 1 out（找零回自己），SDK 的 Sort* 僅在多 descriptor 時呼叫。
 - **找零地址每次不同**：`RootSeedAccount.GenerateAbelAddress()` 每次產生不同地址（SDK 設計，
   fresh public randomness）；歸屬判定靠 `ReceiveCoin`（detector key），與地址無關，故無影響。

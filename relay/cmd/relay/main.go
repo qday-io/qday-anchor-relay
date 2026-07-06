@@ -82,9 +82,10 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("relay wallet loaded", "network", cfg.Abel.Network, "privacy", cfg.Abel.AccountPrivacy)
 
-	scanner := abel.NewScanner(abelClient, account, storeCoinSink{st}, 0, log)
+	rings := abel.NewSDKRingProvider(abelClient)
+	scanner := abel.NewScanner(abelClient, account, storeCoinSink{st}, rings, cfg.Abel.ScanStartHeight, log)
 	submitter := abel.NewSubmitter(abelClient, account, storeCoinSelector{st},
-		abel.NewSDKRingProvider(abelClient), abel.NewSDKCrafter(), cfg.Abel.TxFeeNeutrino, log)
+		rings, abel.NewSDKCrafter(), cfg.Abel.TxFeeNeutrino, log)
 	confirmer := abel.NewConfirmer(abelClient, cfg.Abel.ConfirmDepth, 30*time.Minute, log)
 
 	// ── Pipeline + workers ───────────────────────────────

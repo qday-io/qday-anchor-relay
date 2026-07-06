@@ -24,7 +24,14 @@ type CoinSelector interface {
 	SelectAndLockCoin(ctx context.Context, jobID int64, minValue int64) (*SpendableCoin, error)
 	ReleaseCoin(ctx context.Context, coinID string) error
 	MarkCoinSpent(ctx context.Context, coinID string, jobID int64) error
+	// CoinsLockedByJob lists coins left LOCKED for the job by a previous
+	// (crashed) attempt — Submit reconciles them before doing anything else.
+	CoinsLockedByJob(ctx context.Context, jobID int64) ([]*SpendableCoin, error)
 }
+
+// PersistTxID stores the locally computed txid on the job BEFORE broadcast so
+// a crash in the send window cannot cause a double-send (rule 6.1-2).
+type PersistTxID func(ctx context.Context, txHash string) error
 
 // ErrNoSpendableCoin mirrors the store sentinel without importing it.
 var ErrNoSpendableCoin = errors.New("abel: no spendable coin available")
@@ -33,10 +40,10 @@ var ErrNoSpendableCoin = errors.New("abel: no spendable coin available")
 // retry on a later tick.
 var ErrRingNotReady = errors.New("abel: coin ring block group incomplete, retry later")
 
-// RingProvider rebuilds the TxoRing needed to spend a coin. Interface so the
-// submitter is unit-testable; production uses NewSDKRingProvider.
+// RingProvider rebuilds the TxoRing containing a coin. Interface so the
+// submitter and scanner are unit-testable; production uses NewSDKRingProvider.
 type RingProvider interface {
-	RingFor(coin *SpendableCoin) (*abelian.CoinRing, error)
+	RingFor(txID string, outIndex uint8, blockHeight int64) (*abelian.CoinRing, error)
 }
 
 // TxCrafter isolates the SDK's crypto-heavy generate/sign pipeline so the
@@ -85,14 +92,25 @@ func NewSubmitter(client Client, account abelian.Account, coins CoinSelector, ri
 
 // Submit broadcasts the anchor memo transaction for a job (spec §7.2).
 // existingTxHash implements idempotency rule 6.1-2: when the job already has a
-// tx hash, the chain is consulted before any resend.
-func (s *Submitter) Submit(ctx context.Context, jobID int64, memo []byte, existingTxHash string) (SubmitResult, error) {
+// tx hash, the chain is consulted before any resend. persistTxID is called
+// with the locally computed txid before broadcast.
+func (s *Submitter) Submit(ctx context.Context, jobID int64, memo []byte, existingTxHash string, persistTxID PersistTxID) (SubmitResult, error) {
 	if existingTxHash != "" {
 		if tx, err := s.client.RawTx(existingTxHash); err == nil && tx != nil {
+			// Tx exists — a previous attempt broadcast it. Any coins still
+			// LOCKED for this job funded that tx: finalize them as SPENT.
+			if err := s.reconcileLockedCoins(ctx, jobID, true); err != nil {
+				s.log.Error("abel: reconcile locked coins", "job", jobID, "err", err)
+			}
 			return SubmitResult{TxHash: existingTxHash, Resumed: true}, nil
 		}
 		// Not on chain and not in mempool → fall through and resend with the
 		// same memo (payload identical by construction).
+	}
+	// A crashed attempt may have left coins LOCKED without a broadcast —
+	// return them to the pool before locking a new one.
+	if err := s.reconcileLockedCoins(ctx, jobID, false); err != nil {
+		return SubmitResult{}, err
 	}
 
 	// Coin must cover fee plus a non-zero change output (a zero-output tx is
@@ -151,6 +169,14 @@ func (s *Submitter) Submit(ctx context.Context, jobID int64, memo []byte, existi
 		return SubmitResult{}, err
 	}
 
+	// Persist the txid BEFORE broadcast: if we crash inside the send window,
+	// the next attempt finds the hash and resumes instead of double-sending.
+	if persistTxID != nil {
+		if err := persistTxID(ctx, txID); err != nil {
+			return SubmitResult{}, fmt.Errorf("abel: persist txid before broadcast: %w", err)
+		}
+	}
+
 	sentID, err := s.client.SendSignedTx(rawHex)
 	if err != nil {
 		return SubmitResult{}, fmt.Errorf("abel: send raw tx: %w", err)
@@ -159,12 +185,36 @@ func (s *Submitter) Submit(ctx context.Context, jobID int64, memo []byte, existi
 	if sentID != txID {
 		s.log.Warn("abel: node returned different txid", "local", txID, "node", sentID)
 	}
-	if err := s.coins.MarkCoinSpent(ctx, coin.CoinID, jobID); err != nil {
-		// Tx is out; the coin row lags. Restart recovery re-marks it via
-		// CoinsLockedByJob, so log loudly but do not fail the submit.
+	// WithoutCancel: the tx is on the network; a shutdown signal must not
+	// leave the coin LOCKED-but-spent.
+	if err := s.coins.MarkCoinSpent(context.WithoutCancel(ctx), coin.CoinID, jobID); err != nil {
+		// Tx is out; the coin row lags. The next Submit for this job resumes
+		// via the persisted hash and reconcileLockedCoins finalizes the coin.
 		s.log.Error("abel: mark coin spent failed", "coin", coin.CoinID, "err", err)
 	}
 	return SubmitResult{TxHash: sentID}, nil
+}
+
+// reconcileLockedCoins cleans up coins left LOCKED by a crashed attempt:
+// spent=true finalizes them as SPENT (their tx is on chain), spent=false
+// releases them back to the pool.
+func (s *Submitter) reconcileLockedCoins(ctx context.Context, jobID int64, spent bool) error {
+	locked, err := s.coins.CoinsLockedByJob(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("abel: locked coins for job %d: %w", jobID, err)
+	}
+	for _, c := range locked {
+		if spent {
+			err = s.coins.MarkCoinSpent(ctx, c.CoinID, jobID)
+		} else {
+			err = s.coins.ReleaseCoin(ctx, c.CoinID)
+		}
+		if err != nil {
+			return fmt.Errorf("abel: reconcile coin %s: %w", c.CoinID, err)
+		}
+		s.log.Info("abel: reconciled stale locked coin", "coin", c.CoinID, "job", jobID, "spent", spent)
+	}
+	return nil
 }
 
 // buildInput reconstructs everything the SDK needs to spend a coin from chain
@@ -186,7 +236,7 @@ func (s *Submitter) buildInput(coin *SpendableCoin) (*abelian.TxInDescWithRing, 
 		return nil, fmt.Errorf("abel: coin block %d: %w", coin.BlockHeight, err)
 	}
 
-	ring, err := s.rings.RingFor(coin)
+	ring, err := s.rings.RingFor(coin.TxHash, coin.OutIndex, coin.BlockHeight)
 	if err != nil {
 		return nil, err
 	}
@@ -211,9 +261,9 @@ type sdkRingProvider struct {
 
 func NewSDKRingProvider(client Client) RingProvider { return &sdkRingProvider{client: client} }
 
-func (p *sdkRingProvider) RingFor(coin *SpendableCoin) (*abelian.CoinRing, error) {
+func (p *sdkRingProvider) RingFor(txID string, outIndex uint8, blockHeight int64) (*abelian.CoinRing, error) {
 	// The ring group only exists once all its blocks are on chain.
-	heights := abelian.GetRingBlockHeights(coin.BlockHeight)
+	heights := abelian.GetRingBlockHeights(blockHeight)
 	tip, err := p.client.ChainHeight()
 	if err != nil {
 		return nil, fmt.Errorf("abel: chain height: %w", err)
@@ -224,15 +274,15 @@ func (p *sdkRingProvider) RingFor(coin *SpendableCoin) (*abelian.CoinRing, error
 		}
 	}
 
-	serializedBlocks, err := p.client.RingBlockGroup(coin.BlockHeight)
+	serializedBlocks, err := p.client.RingBlockGroup(blockHeight)
 	if err != nil {
-		return nil, fmt.Errorf("abel: ring block group for height %d: %w", coin.BlockHeight, err)
+		return nil, fmt.Errorf("abel: ring block group for height %d: %w", blockHeight, err)
 	}
 	rings, err := abelian.BuildCoinRings(serializedBlocks)
 	if err != nil {
 		return nil, fmt.Errorf("abel: build coin rings: %w", err)
 	}
-	want := abelian.NewCoinID(coin.TxHash, coin.OutIndex)
+	want := abelian.NewCoinID(txID, outIndex)
 	for _, ring := range rings {
 		for _, id := range ring.CoinIDRing.CoinIDs {
 			if id.TxID == want.TxID && id.Index == want.Index {
@@ -240,5 +290,5 @@ func (p *sdkRingProvider) RingFor(coin *SpendableCoin) (*abelian.CoinRing, error
 			}
 		}
 	}
-	return nil, fmt.Errorf("abel: coin %s not found in its ring group", coin.CoinID)
+	return nil, fmt.Errorf("abel: coin %s not found in its ring group", want.String())
 }

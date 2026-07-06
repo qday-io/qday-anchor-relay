@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -30,10 +31,16 @@ func submitterAccount(t *testing.T) abelian.Account {
 }
 
 type fakeSelector struct {
-	coin     *SpendableCoin
-	locked   bool
-	released bool
-	spent    bool
+	coin       *SpendableCoin
+	staleLocks []*SpendableCoin // pre-existing LOCKED coins from a "crash"
+	locked     bool
+	released   bool
+	spent      bool
+	reconciled []string // coinIDs reconciled: "release:<id>" or "spend:<id>"
+}
+
+func (f *fakeSelector) CoinsLockedByJob(ctx context.Context, jobID int64) ([]*SpendableCoin, error) {
+	return f.staleLocks, nil
 }
 
 func (f *fakeSelector) SelectAndLockCoin(ctx context.Context, jobID int64, minValue int64) (*SpendableCoin, error) {
@@ -49,20 +56,23 @@ func (f *fakeSelector) SelectAndLockCoin(ctx context.Context, jobID int64, minVa
 
 func (f *fakeSelector) ReleaseCoin(ctx context.Context, coinID string) error {
 	f.released = true
+	f.reconciled = append(f.reconciled, "release:"+coinID)
 	return nil
 }
 
 func (f *fakeSelector) MarkCoinSpent(ctx context.Context, coinID string, jobID int64) error {
 	f.spent = true
+	f.reconciled = append(f.reconciled, "spend:"+coinID)
 	return nil
 }
 
 // minimalRing builds a small but serializable CoinRing containing the coin.
 func minimalRing(t *testing.T, coin *SpendableCoin) *abelian.CoinRing {
 	t.Helper()
+	// Block/tx ids must be valid 32-byte hex — Serialize hex-decodes them.
 	ring, err := abelian.NewCoinRing(
 		1, coin.BlockHeight,
-		[]string{"0011", "2233", "4455"},
+		[]string{strings.Repeat("11", 32), strings.Repeat("22", 32), strings.Repeat("33", 32)},
 		[]*abelian.CoinID{abelian.NewCoinID(coin.TxHash, coin.OutIndex)},
 		[][]byte{[]byte("serialized-txo")},
 		false,
@@ -78,7 +88,7 @@ type fakeRings struct {
 	err  error
 }
 
-func (f *fakeRings) RingFor(coin *SpendableCoin) (*abelian.CoinRing, error) {
+func (f *fakeRings) RingFor(txID string, outIndex uint8, blockHeight int64) (*abelian.CoinRing, error) {
 	return f.ring, f.err
 }
 
@@ -130,7 +140,7 @@ func TestSubmit_HappyPath_MemoAndChange(t *testing.T) {
 	sub := newTestSubmitter(t, chain, sel, &fakeRings{ring: minimalRing(t, coin)}, crafter)
 
 	memo := []byte("QDAY2ANCHOR|v1|7|0x" + "00")
-	res, err := sub.Submit(context.Background(), 42, memo, "")
+	res, err := sub.Submit(context.Background(), 42, memo, "", nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -170,7 +180,7 @@ func TestSubmit_IdempotentResume(t *testing.T) {
 	sel := &fakeSelector{coin: coin}
 	sub := newTestSubmitter(t, chain, sel, &fakeRings{}, &fakeCrafter{})
 
-	res, err := sub.Submit(context.Background(), 42, []byte("m"), "existing-hash")
+	res, err := sub.Submit(context.Background(), 42, []byte("m"), "existing-hash", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +199,7 @@ func TestSubmit_ResendWhenTxVanished(t *testing.T) {
 	crafter := &fakeCrafter{}
 	sub := newTestSubmitter(t, chain, sel, &fakeRings{ring: minimalRing(t, coin)}, crafter)
 
-	res, err := sub.Submit(context.Background(), 42, []byte("same-memo"), "existing-hash")
+	res, err := sub.Submit(context.Background(), 42, []byte("same-memo"), "existing-hash", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +215,7 @@ func TestSubmit_NoCoinPropagates(t *testing.T) {
 	coin := testCoin()
 	chain := submitChain(coin, "00")
 	sub := newTestSubmitter(t, chain, &fakeSelector{}, &fakeRings{}, &fakeCrafter{})
-	if _, err := sub.Submit(context.Background(), 42, []byte("m"), ""); !errors.Is(err, ErrNoSpendableCoin) {
+	if _, err := sub.Submit(context.Background(), 42, []byte("m"), "", nil); !errors.Is(err, ErrNoSpendableCoin) {
 		t.Errorf("err = %v, want ErrNoSpendableCoin", err)
 	}
 }
@@ -215,7 +225,7 @@ func TestSubmit_CoinTooSmallForFeePlusChange(t *testing.T) {
 	coin.ValueNeutrino = testFee // == fee → cannot make non-zero change
 	chain := submitChain(coin, "00")
 	sub := newTestSubmitter(t, chain, &fakeSelector{coin: coin}, &fakeRings{}, &fakeCrafter{})
-	if _, err := sub.Submit(context.Background(), 42, []byte("m"), ""); !errors.Is(err, ErrNoSpendableCoin) {
+	if _, err := sub.Submit(context.Background(), 42, []byte("m"), "", nil); !errors.Is(err, ErrNoSpendableCoin) {
 		t.Errorf("err = %v, want ErrNoSpendableCoin", err)
 	}
 }
@@ -226,7 +236,7 @@ func TestSubmit_ReleasesCoinOnPreBroadcastFailure(t *testing.T) {
 	sel := &fakeSelector{coin: coin}
 	sub := newTestSubmitter(t, chain, sel, &fakeRings{ring: minimalRing(t, coin)}, &fakeCrafter{err: errors.New("sign blew up")})
 
-	if _, err := sub.Submit(context.Background(), 42, []byte("m"), ""); err == nil {
+	if _, err := sub.Submit(context.Background(), 42, []byte("m"), "", nil); err == nil {
 		t.Fatal("expected craft error")
 	}
 	if !sel.released || sel.spent {
@@ -240,7 +250,7 @@ func TestSubmit_RingNotReadyReleasesCoin(t *testing.T) {
 	sel := &fakeSelector{coin: coin}
 	sub := newTestSubmitter(t, chain, sel, &fakeRings{err: ErrRingNotReady}, &fakeCrafter{})
 
-	if _, err := sub.Submit(context.Background(), 42, []byte("m"), ""); !errors.Is(err, ErrRingNotReady) {
+	if _, err := sub.Submit(context.Background(), 42, []byte("m"), "", nil); !errors.Is(err, ErrRingNotReady) {
 		t.Fatalf("err = %v, want ErrRingNotReady", err)
 	}
 	if !sel.released {
@@ -265,7 +275,81 @@ func TestSDKRingProvider_NotReadyGate(t *testing.T) {
 	}
 
 	p := NewSDKRingProvider(chain)
-	if _, err := p.RingFor(coin); !errors.Is(err, ErrRingNotReady) {
+	if _, err := p.RingFor(coin.TxHash, coin.OutIndex, coin.BlockHeight); !errors.Is(err, ErrRingNotReady) {
 		t.Errorf("err = %v, want ErrRingNotReady", err)
+	}
+}
+
+func TestSubmit_PersistTxIDBeforeBroadcast(t *testing.T) {
+	coin := testCoin()
+	chain := submitChain(coin, "00")
+	sel := &fakeSelector{coin: coin}
+	sub := newTestSubmitter(t, chain, sel, &fakeRings{ring: minimalRing(t, coin)}, &fakeCrafter{})
+
+	var persisted string
+	persist := func(ctx context.Context, txHash string) error {
+		persisted = txHash
+		return nil
+	}
+	res, err := sub.Submit(context.Background(), 42, []byte("m"), "", persist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted != "crafted-txid" {
+		t.Errorf("persisted txid = %q, want crafted-txid", persisted)
+	}
+	if res.TxHash != "sent-tx" {
+		t.Errorf("res = %+v", res)
+	}
+}
+
+func TestSubmit_PersistFailureAbortsBeforeBroadcast(t *testing.T) {
+	coin := testCoin()
+	chain := submitChain(coin, "00")
+	sel := &fakeSelector{coin: coin}
+	sub := newTestSubmitter(t, chain, sel, &fakeRings{ring: minimalRing(t, coin)}, &fakeCrafter{})
+
+	persist := func(ctx context.Context, txHash string) error {
+		return errors.New("db down")
+	}
+	if _, err := sub.Submit(context.Background(), 42, []byte("m"), "", persist); err == nil {
+		t.Fatal("expected persist error to abort submit")
+	}
+	if !sel.released {
+		t.Error("coin must be released when persist fails (no broadcast happened)")
+	}
+}
+
+func TestSubmit_ReconcilesStaleLocksOnResume(t *testing.T) {
+	coin := testCoin()
+	chain := submitChain(coin, "00")
+	chain.txs["existing-hash"] = mkTx("existing-hash")
+	stale := &SpendableCoin{CoinID: "stale:0", TxHash: "stale", OutIndex: 0, ValueNeutrino: 1, BlockHeight: 1}
+	sel := &fakeSelector{coin: coin, staleLocks: []*SpendableCoin{stale}}
+	sub := newTestSubmitter(t, chain, sel, &fakeRings{}, &fakeCrafter{})
+
+	res, err := sub.Submit(context.Background(), 42, []byte("m"), "existing-hash", nil)
+	if err != nil || !res.Resumed {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// Tx exists on chain → the stale locked coin funded it → finalize SPENT.
+	if len(sel.reconciled) != 1 || sel.reconciled[0] != "spend:stale:0" {
+		t.Errorf("reconciled = %v, want [spend:stale:0]", sel.reconciled)
+	}
+}
+
+func TestSubmit_ReleasesStaleLocksOnFreshAttempt(t *testing.T) {
+	coin := testCoin()
+	chain := submitChain(coin, "00")
+	stale := &SpendableCoin{CoinID: "stale:0", TxHash: "stale", OutIndex: 0, ValueNeutrino: 1, BlockHeight: 1}
+	sel := &fakeSelector{coin: coin, staleLocks: []*SpendableCoin{stale}}
+	sub := newTestSubmitter(t, chain, sel, &fakeRings{ring: minimalRing(t, coin)}, &fakeCrafter{})
+
+	if _, err := sub.Submit(context.Background(), 42, []byte("m"), "", nil); err != nil {
+		t.Fatal(err)
+	}
+	// No prior tx → stale lock was a pre-broadcast crash → release it first.
+	if sel.reconciled[0] != "release:stale:0" {
+		t.Errorf("reconciled = %v, want release:stale:0 first", sel.reconciled)
 	}
 }

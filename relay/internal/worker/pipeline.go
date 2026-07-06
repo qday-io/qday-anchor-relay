@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -18,11 +19,15 @@ type JobStore interface {
 	RetryCandidates(ctx context.Context, status store.Status, baseSeconds int, limit int) ([]*store.Job, error)
 	TransitionJob(ctx context.Context, jobID int64, from, to store.Status, patch store.JobPatch) error
 	FailOrRetry(ctx context.Context, job *store.Job, retryMax int, cause error) error
+	// SetJobAbelTxHash persists the pre-broadcast txid (rule 6.1-2).
+	SetJobAbelTxHash(ctx context.Context, jobID int64, txHash string) error
+	// ResurrectCoinsSpentByJob returns a lost tx's coins to the pool.
+	ResurrectCoinsSpentByJob(ctx context.Context, jobID int64) error
 }
 
 // AnchorSubmitter abstracts abel.Submitter.
 type AnchorSubmitter interface {
-	Submit(ctx context.Context, jobID int64, memo []byte, existingTxHash string) (abel.SubmitResult, error)
+	Submit(ctx context.Context, jobID int64, memo []byte, existingTxHash string, persistTxID abel.PersistTxID) (abel.SubmitResult, error)
 }
 
 // AnchorConfirmer abstracts abel.Confirmer.
@@ -67,8 +72,17 @@ func (p *Pipeline) SubmitTick(ctx context.Context) error {
 			return err
 		}
 		memo := anchor.EncodeMemo(job.BatchNumber, job.StateRoot)
-		res, err := p.submitter.Submit(ctx, job.ID, memo, job.AbelTxHash)
+		persist := func(pctx context.Context, txHash string) error {
+			return p.store.SetJobAbelTxHash(pctx, job.ID, txHash)
+		}
+		res, err := p.submitter.Submit(ctx, job.ID, memo, job.AbelTxHash, persist)
 		if err != nil {
+			// Environmental waits (empty wallet / immature ring group) are
+			// normal timing conditions — do not burn the retry budget.
+			if errors.Is(err, abel.ErrNoSpendableCoin) || errors.Is(err, abel.ErrRingNotReady) {
+				p.log.Info("pipeline: submit waiting", "job", job.ID, "reason", err)
+				continue
+			}
 			p.failOrRetry(ctx, job, err)
 			continue
 		}
@@ -116,6 +130,11 @@ func (p *Pipeline) ConfirmTick(ctx context.Context) error {
 			patch := store.JobPatch{Detail: map[string]any{"reason": "abel tx lost, resubmitting", "lost_tx": job.AbelTxHash}}
 			if err := p.store.TransitionJob(ctx, job.ID, store.StatusAbelSubmitted, store.StatusPending, patch); err != nil {
 				p.log.Error("pipeline: rollback transition failed", "job", job.ID, "err", err)
+				continue
+			}
+			// The lost tx never consumed its coins on chain — return them.
+			if err := p.store.ResurrectCoinsSpentByJob(ctx, job.ID); err != nil {
+				p.log.Error("pipeline: coin resurrection failed", "job", job.ID, "err", err)
 			}
 		}
 	}
@@ -123,7 +142,19 @@ func (p *Pipeline) ConfirmTick(ctx context.Context) error {
 }
 
 // RecordTick moves ABEL_CONFIRMED jobs through CONTRACT_RECORDED to DONE.
+// It also sweeps jobs stranded in CONTRACT_RECORDED by a crash between the two
+// transitions (rule 6.1-1: every non-terminal status must resume).
 func (p *Pipeline) RecordTick(ctx context.Context) error {
+	stranded, err := p.store.RetryCandidates(ctx, store.StatusContractRecorded, 0, p.batchSize)
+	if err != nil {
+		return err
+	}
+	for _, job := range stranded {
+		if err := p.store.TransitionJob(ctx, job.ID, store.StatusContractRecorded, store.StatusDone, store.JobPatch{}); err != nil {
+			p.log.Error("pipeline: stranded-done transition failed", "job", job.ID, "err", err)
+		}
+	}
+
 	jobs, err := p.store.RetryCandidates(ctx, store.StatusAbelConfirmed, p.backoffBase, p.batchSize)
 	if err != nil {
 		return err
@@ -165,6 +196,8 @@ func (p *Pipeline) recordJob(ctx context.Context, job *store.Job) {
 			// A revert may mean "someone recorded it meanwhile" — re-check.
 			if again, cerr := p.recorder.IsAnchored(ctx, job.StateRoot); cerr == nil && again {
 				detail["reason"] = "recordAnchor reverted but root is anchored, advancing"
+				detail["reverted_tx"] = recordTxHash
+				recordTxHash = "" // never store a reverted tx as the anchor record
 			} else {
 				p.failOrRetry(ctx, job, err)
 				return

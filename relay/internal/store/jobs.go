@@ -82,7 +82,9 @@ func (s *Store) TransitionJob(ctx context.Context, jobID int64, from, to Status,
 				abel_tx_hash   = COALESCE($2, abel_tx_hash),
 				abel_height    = COALESCE($3, abel_height),
 				record_tx_hash = COALESCE($4, record_tx_hash),
-				last_error     = COALESCE($5, last_error),
+				-- last_error is cleared on every transition unless the patch
+				-- sets one; failure history lives in job_events.
+				last_error     = $5,
 				updated_at     = now()
 			WHERE id = $6 AND status = $7`,
 			string(to), patch.AbelTxHash, patch.AbelHeight, patch.RecordTxHash,
@@ -143,6 +145,16 @@ func (s *Store) FailOrRetry(ctx context.Context, job *Job, retryMax int, cause e
 			map[string]any{"error": msg, "retry_count": retryCount})
 		return err
 	})
+}
+
+// SetJobAbelTxHash persists the locally computed Abelian txid BEFORE broadcast
+// (idempotency rule 6.1-2: a crash between broadcast and the status transition
+// must not lose the hash, or the next tick would double-send).
+func (s *Store) SetJobAbelTxHash(ctx context.Context, jobID int64, txHash string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE anchor_jobs SET abel_tx_hash = $1, updated_at = now() WHERE id = $2`,
+		txHash, jobID)
+	return err
 }
 
 // RetryCandidates returns non-terminal jobs whose next retry is due

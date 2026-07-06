@@ -138,8 +138,9 @@ func TestScanOnce_StartBlockRespectedOnFirstBoot(t *testing.T) {
 	if err := p.ScanOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(src.calls) != 1 || src.calls[0] != [2]uint64{501, 1000} {
-		t.Fatalf("calls = %v, want [[501 1000]]", src.calls)
+	// DA_START_BLOCK itself must be included in the first scan.
+	if len(src.calls) != 1 || src.calls[0] != [2]uint64{500, 1000} {
+		t.Fatalf("calls = %v, want [[500 1000]]", src.calls)
 	}
 }
 

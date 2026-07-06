@@ -207,3 +207,83 @@ func TestCoinLockSpendRelease(t *testing.T) {
 		t.Errorf("err = %v, want ErrNoSpendableCoin", err)
 	}
 }
+
+func TestCoinSerialAndSpendDetection(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	c := &Coin{CoinID: "sx:0", TxHash: "sx", OutIndex: 0, ValueNeutrino: 3_000_000, BlockHeight: 5, Status: CoinUnspent}
+	if err := s.UpsertCoin(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+
+	missing, err := s.CoinsMissingSerial(ctx, 10)
+	if err != nil || len(missing) != 1 || missing[0].CoinID != "sx:0" {
+		t.Fatalf("missing = %+v (%v)", missing, err)
+	}
+
+	if err := s.SetCoinSerial(ctx, "sx:0", "serialhex1", "ring9", 3); err != nil {
+		t.Fatal(err)
+	}
+	missing, _ = s.CoinsMissingSerial(ctx, 10)
+	if len(missing) != 0 {
+		t.Fatalf("missing after set = %+v", missing)
+	}
+	got, _ := s.CoinByID(ctx, "sx:0")
+	if got.SerialNumber != "serialhex1" || got.RingID != "ring9" || got.RingIndex != 3 {
+		t.Fatalf("coin = %+v", got)
+	}
+
+	matched, err := s.MarkCoinSpentBySerial(ctx, "serialhex1")
+	if err != nil || !matched {
+		t.Fatalf("matched=%v err=%v", matched, err)
+	}
+	got, _ = s.CoinByID(ctx, "sx:0")
+	if got.Status != CoinSpent {
+		t.Fatalf("status = %s, want SPENT", got.Status)
+	}
+
+	matched, err = s.MarkCoinSpentBySerial(ctx, "unknown-serial")
+	if err != nil || matched {
+		t.Fatalf("unknown serial matched=%v err=%v", matched, err)
+	}
+}
+
+func TestResurrectCoinsSpentByJob(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_ = s.CreateJobsAndAdvanceCursor(ctx, []Commit{testCommit(30)}, 300)
+	jobs, _ := s.JobsByStatus(ctx, StatusPending, 1)
+	jobID := jobs[0].ID
+
+	c := &Coin{CoinID: "rz:0", TxHash: "rz", OutIndex: 0, ValueNeutrino: 3_000_000, BlockHeight: 5, Status: CoinUnspent}
+	_ = s.UpsertCoin(ctx, c)
+	coin, err := s.SelectAndLockCoin(ctx, jobID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.MarkCoinSpent(ctx, coin.CoinID, jobID)
+
+	if err := s.ResurrectCoinsSpentByJob(ctx, jobID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.CoinByID(ctx, coin.CoinID)
+	if got.Status != CoinUnspent || got.SpentByJob != nil {
+		t.Fatalf("coin = %+v, want UNSPENT/unowned", got)
+	}
+}
+
+func TestSetJobAbelTxHash(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_ = s.CreateJobsAndAdvanceCursor(ctx, []Commit{testCommit(31)}, 310)
+	jobs, _ := s.JobsByStatus(ctx, StatusPending, 1)
+
+	if err := s.SetJobAbelTxHash(ctx, jobs[0].ID, "prehash123"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.JobByID(ctx, jobs[0].ID)
+	if got.AbelTxHash != "prehash123" || got.Status != StatusPending {
+		t.Fatalf("job = %+v", got)
+	}
+}

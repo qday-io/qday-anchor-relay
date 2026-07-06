@@ -17,10 +17,12 @@ import (
 var abelHash64 = strings.Repeat("ab", 32)
 
 type fakeJobStore struct {
-	jobs        map[store.Status][]*store.Job
-	transitions []string // "id:from>to"
-	failures    []int64
-	patches     map[int64]store.JobPatch
+	jobs            map[store.Status][]*store.Job
+	transitions     []string // "from>to"
+	failures        []int64
+	patches         map[int64]store.JobPatch
+	persistedHashes []string
+	resurrected     []int64
 }
 
 func newFakeJobStore(jobs ...*store.Job) *fakeJobStore {
@@ -49,6 +51,16 @@ func (f *fakeJobStore) FailOrRetry(ctx context.Context, job *store.Job, retryMax
 	return nil
 }
 
+func (f *fakeJobStore) SetJobAbelTxHash(ctx context.Context, jobID int64, txHash string) error {
+	f.persistedHashes = append(f.persistedHashes, txHash)
+	return nil
+}
+
+func (f *fakeJobStore) ResurrectCoinsSpentByJob(ctx context.Context, jobID int64) error {
+	f.resurrected = append(f.resurrected, jobID)
+	return nil
+}
+
 func transitionKey(id int64, from, to store.Status) string {
 	return string(from) + ">" + string(to)
 }
@@ -60,8 +72,13 @@ type fakeSubmit struct {
 	hash string // existing hash passed
 }
 
-func (f *fakeSubmit) Submit(ctx context.Context, jobID int64, memo []byte, existing string) (abel.SubmitResult, error) {
+func (f *fakeSubmit) Submit(ctx context.Context, jobID int64, memo []byte, existing string, persist abel.PersistTxID) (abel.SubmitResult, error) {
 	f.got, f.hash = memo, existing
+	if f.err == nil && persist != nil {
+		if err := persist(ctx, f.res.TxHash); err != nil {
+			return abel.SubmitResult{}, err
+		}
+	}
 	return f.res, f.err
 }
 
@@ -75,11 +92,11 @@ func (f *fakeConfirm) Check(ctx context.Context, h string, at time.Time) (abel.C
 }
 
 type fakeRecord struct {
-	anchored    bool
+	anchored          bool
 	anchoredAfterFail bool
-	recordHash  string
-	recordErr   error
-	recorded    []registry.AnchorRecord
+	recordHash        string
+	recordErr         error
+	recorded          []registry.AnchorRecord
 }
 
 func (f *fakeRecord) IsAnchored(ctx context.Context, root [32]byte) (bool, error) {
@@ -283,5 +300,68 @@ func TestRecordTick_BadAbelHashFails(t *testing.T) {
 	}
 	if len(fs.failures) != 1 {
 		t.Errorf("failures = %v", fs.failures)
+	}
+}
+
+func TestSubmitTick_WaitErrorsDoNotBurnRetries(t *testing.T) {
+	for _, waitErr := range []error{abel.ErrNoSpendableCoin, abel.ErrRingNotReady} {
+		fs := newFakeJobStore(job(20, store.StatusPending))
+		p := newPipeline(fs, &fakeSubmit{err: waitErr}, &fakeConfirm{}, &fakeRecord{})
+		if err := p.SubmitTick(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(fs.failures) != 0 || len(fs.transitions) != 0 {
+			t.Errorf("%v: failures=%v transitions=%v (want none)", waitErr, fs.failures, fs.transitions)
+		}
+	}
+}
+
+func TestSubmitTick_PersistsHashBeforeBroadcast(t *testing.T) {
+	fs := newFakeJobStore(job(21, store.StatusPending))
+	p := newPipeline(fs, &fakeSubmit{res: abel.SubmitResult{TxHash: abelHash64}}, &fakeConfirm{}, &fakeRecord{})
+	if err := p.SubmitTick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.persistedHashes) != 1 || fs.persistedHashes[0] != abelHash64 {
+		t.Errorf("persisted = %v", fs.persistedHashes)
+	}
+}
+
+func TestConfirmTick_LostResurrectsCoins(t *testing.T) {
+	j := job(22, store.StatusAbelSubmitted)
+	j.AbelTxHash = abelHash64
+	fs := newFakeJobStore(j)
+	p := newPipeline(fs, &fakeSubmit{}, &fakeConfirm{res: abel.ConfirmResult{Status: abel.ConfirmLost}}, &fakeRecord{})
+	if err := p.ConfirmTick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.resurrected) != 1 || fs.resurrected[0] != 22 {
+		t.Errorf("resurrected = %v", fs.resurrected)
+	}
+}
+
+func TestRecordTick_SweepsStrandedContractRecorded(t *testing.T) {
+	j := job(23, store.StatusContractRecorded)
+	fs := newFakeJobStore(j)
+	p := newPipeline(fs, &fakeSubmit{}, &fakeConfirm{}, &fakeRecord{})
+	if err := p.RecordTick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.transitions) != 1 || fs.transitions[0] != "CONTRACT_RECORDED>DONE" {
+		t.Errorf("transitions = %v", fs.transitions)
+	}
+}
+
+func TestRecordTick_RevertedTxNotStoredAsRecord(t *testing.T) {
+	j := job(24, store.StatusAbelConfirmed)
+	j.AbelTxHash = abelHash64
+	fs := newFakeJobStore(j)
+	rec := &fakeRecord{recordErr: errors.New("execution reverted"), anchoredAfterFail: true}
+	p := newPipeline(fs, &fakeSubmit{}, &fakeConfirm{}, rec)
+	if err := p.RecordTick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if patch := fs.patches[24]; patch.RecordTxHash != nil {
+		t.Errorf("reverted tx stored as record_tx_hash: %v", *patch.RecordTxHash)
 	}
 }

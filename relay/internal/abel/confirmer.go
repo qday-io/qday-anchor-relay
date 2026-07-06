@@ -2,10 +2,25 @@ package abel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
+
+	abelian "github.com/pqabelian/abelian-sdk-go-v2/abelian"
 )
+
+// isRPCNotFound reports whether the error is a JSON-RPC level error (the node
+// answered — e.g. "no information available about transaction") rather than a
+// transport failure. abec wraps RPC errors as abelian.RPCError.
+func isRPCNotFound(err error) bool {
+	var rpcErr abelian.RPCError
+	if errors.As(err, &rpcErr) {
+		return true
+	}
+	var rpcErrPtr *abelian.RPCError
+	return errors.As(err, &rpcErrPtr)
+}
 
 // ConfirmStatus is the confirmer's verdict on a submitted anchor tx.
 type ConfirmStatus int
@@ -50,6 +65,11 @@ func NewConfirmer(client Client, confirmDepth int64, lostGrace time.Duration, lo
 // derived from the enclosing block instead (docs/sdk-verified-api.md).
 func (c *Confirmer) Check(ctx context.Context, abelTxHash string, submittedAt time.Time) (ConfirmResult, error) {
 	tx, err := c.client.RawTx(abelTxHash)
+	if err != nil && !isRPCNotFound(err) {
+		// Transport/auth/node failure — NOT evidence the tx is gone. Treating
+		// it as lost would trigger a duplicate resubmit; retry next tick.
+		return ConfirmResult{}, fmt.Errorf("abel: get tx %s: %w", abelTxHash, err)
+	}
 	if err != nil || tx == nil {
 		return c.handleUnknownTx(abelTxHash, submittedAt, err)
 	}
