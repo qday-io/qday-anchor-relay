@@ -4,7 +4,7 @@
 # OQS_KEM_keypair_with_recovery API — upstream liboqs does not have it).
 FROM golang:1.23-bookworm AS liboqs
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        cmake ninja-build build-essential ca-certificates git \
+        cmake ninja-build build-essential ca-certificates git libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 https://github.com/cryptosuite/liboqs.git /src/liboqs
 # The fork predates modern compilers; -Werror trips on new warnings.
