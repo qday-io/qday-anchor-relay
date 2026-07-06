@@ -1,25 +1,31 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { verifyCredentials } from "@/lib/auth";
-import { getLoginRateLimiter } from "@/lib/ratelimit";
+import { getLoginRateLimiter, resolveLoginKey } from "@/lib/ratelimit";
 import { getSession } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function clientIp(request: NextRequest): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
-  }
-  return request.headers.get("x-real-ip") ?? "unknown";
+// TRUST_PROXY_HEADERS: set to "true" ONLY when the portal runs behind a
+// trusted reverse proxy that overwrites x-forwarded-for. Then failed logins
+// are limited per client IP (5 / 15 min). When unset (default, container
+// exposed directly), forwarding headers are attacker-controlled and are
+// ignored: all attempts share a single global bucket (20 / 15 min) so a
+// spoofed header can neither bypass the limiter nor lock the admin out.
+function trustProxyHeaders(): boolean {
+  const value = (process.env.TRUST_PROXY_HEADERS ?? "").trim().toLowerCase();
+  return value === "true" || value === "1";
 }
 
 export async function POST(request: NextRequest) {
-  const ip = clientIp(request);
   const limiter = getLoginRateLimiter();
+  const { key, maxFailures } = resolveLoginKey({
+    trustProxyHeaders: trustProxyHeaders(),
+    forwardedFor: request.headers.get("x-forwarded-for"),
+    realIp: request.headers.get("x-real-ip"),
+  });
 
-  const gate = limiter.check(ip);
+  const gate = limiter.check(key, Date.now(), maxFailures);
   if (!gate.allowed) {
     const retryAfterSeconds = Math.ceil(gate.retryAfterMs / 1000);
     return NextResponse.json(
@@ -36,14 +42,14 @@ export async function POST(request: NextRequest) {
 
   const valid = await verifyCredentials(username, password);
   if (!valid) {
-    limiter.recordFailure(ip);
+    limiter.recordFailure(key, Date.now(), maxFailures);
     return NextResponse.json(
       { error: "Invalid username or password." },
       { status: 401 },
     );
   }
 
-  limiter.recordSuccess(ip);
+  limiter.recordSuccess(key);
   const session = await getSession();
   session.username = username;
   session.loggedInAt = Date.now();

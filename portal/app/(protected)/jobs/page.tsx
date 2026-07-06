@@ -5,7 +5,12 @@ import { RefreshButton } from "@/components/RefreshButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TxLink } from "@/components/TxLink";
 import { bytesToHex, formatTimestamp } from "@/lib/format";
-import { getJobsPage, JOB_STATUSES } from "@/lib/queries";
+import {
+  getJobsPage,
+  isPgBigint,
+  JOB_STATUSES,
+  type JobRow,
+} from "@/lib/queries";
 
 export const revalidate = 0;
 export const metadata: Metadata = { title: "Jobs" };
@@ -38,16 +43,23 @@ export default async function JobsPage({
     sp.status && (JOB_STATUSES as readonly string[]).includes(sp.status)
       ? sp.status
       : null;
-  const batch = sp.batch && /^[0-9]+$/.test(sp.batch.trim()) ? sp.batch.trim() : null;
+  const batchRaw = sp.batch?.trim() ?? "";
+  const batchIsNumeric = /^[0-9]+$/.test(batchRaw);
+  // Numeric but beyond int8 range: cannot exist in the DB, so treat the
+  // search as matching nothing instead of letting Postgres throw on the cast.
+  const batchOutOfRange = batchIsNumeric && !isPgBigint(batchRaw);
+  const batch = batchIsNumeric && !batchOutOfRange ? batchRaw : null;
   const pageParam = Number(sp.page);
   const page = Number.isInteger(pageParam) && pageParam >= 1 ? pageParam : 1;
 
-  const { jobs, total } = await getJobsPage({
-    status,
-    batch,
-    page,
-    perPage: PER_PAGE,
-  });
+  const { jobs, total } = batchOutOfRange
+    ? { jobs: [] as JobRow[], total: 0 }
+    : await getJobsPage({
+        status,
+        batch,
+        page,
+        perPage: PER_PAGE,
+      });
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
   const abelExplorer = process.env.ABEL_EXPLORER_BASE || "https://explorer.pqabelian.io";

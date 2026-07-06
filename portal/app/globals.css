@@ -559,6 +559,34 @@ table.detail tr:last-child td {
   color: var(--amber);
 }
 
+/* ── Error state ────────────────────────────── */
+
+.error-state {
+  max-width: 440px;
+  margin: 64px auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 32px 28px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.error-state .btn {
+  min-width: 120px;
+}
+
+.error-state p {
+  margin: 0;
+}
+
+.error-digest {
+  font-size: 12px;
+}
+
 /* ── Timeline ───────────────────────────────── */
 
 .timeline {

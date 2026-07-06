@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { TxLink } from "@/components/TxLink";
 import { bytesToHex, formatTimestamp, groupDigits } from "@/lib/format";
 import { encodeMemo } from "@/lib/memo";
-import { getJobById, getJobEvents } from "@/lib/queries";
+import { getJobById, getJobEvents, isPgBigint } from "@/lib/queries";
 
 export const revalidate = 0;
 export const metadata: Metadata = { title: "Job detail" };
@@ -26,7 +26,9 @@ export default async function JobDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  if (!/^[0-9]+$/.test(id)) notFound();
+  // Reject non-numeric and out-of-int8-range ids before querying: a value
+  // above 2^63-1 cannot exist and would make the Postgres int8 cast throw.
+  if (!isPgBigint(id)) notFound();
 
   const job = await getJobById(id);
   if (!job) notFound();

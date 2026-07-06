@@ -1,9 +1,10 @@
 import bcrypt from "bcryptjs";
 
-// A valid bcrypt hash of a throwaway string. Used so that a bcrypt compare
-// always runs even when the username is wrong or ADMIN_PASSWORD_HASH is
-// unset, keeping response timing uniform. Its result is never trusted.
-const DUMMY_HASH = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+// A valid bcrypt hash (cost 12, matching the real admin hash policy) of a
+// throwaway string. Used so that a bcrypt compare always runs — at the same
+// cost — even when the username is wrong or ADMIN_PASSWORD_HASH is unset,
+// keeping response timing uniform. Its result is never trusted.
+const DUMMY_HASH = "$2b$12$KZlLm1iZwpKj4AdMOWSpmOjv4wXMkUyXE9nOsLvzLMWzMQQLnLW52";
 
 /**
  * Verify the single admin account: username must equal ADMIN_USERNAME

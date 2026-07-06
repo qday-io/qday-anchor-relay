@@ -2,6 +2,18 @@ import { query } from "./db";
 
 // pg returns BIGINT columns as strings, BYTEA as Buffer, JSONB as objects.
 
+/** Largest value a Postgres BIGINT (int8) can hold: 2^63 - 1. */
+export const PG_INT8_MAX = 9223372036854775807n;
+
+/**
+ * True when `value` is a decimal string that fits in a Postgres BIGINT.
+ * User-supplied ids/batch numbers outside this range must be treated as
+ * "no match" instead of being sent to Postgres, where the int8 cast throws.
+ */
+export function isPgBigint(value: string): boolean {
+  return /^[0-9]+$/.test(value) && BigInt(value) <= PG_INT8_MAX;
+}
+
 export const JOB_STATUSES = [
   "PENDING",
   "ABEL_SUBMITTED",
