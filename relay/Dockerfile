@@ -40,5 +40,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 COPY --from=liboqs /opt/liboqs/lib /opt/liboqs/lib
 COPY --from=build /out/relay /usr/local/bin/relay
+# The Abelian SDK opens ./sdk.log (file rotator) in the working directory at
+# startup — give the nobody user a writable one.
+RUN mkdir -p /var/lib/relay && chown nobody /var/lib/relay
+WORKDIR /var/lib/relay
 USER nobody
 ENTRYPOINT ["/usr/local/bin/relay"]
