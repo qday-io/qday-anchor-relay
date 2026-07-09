@@ -27,11 +27,14 @@ type Server struct {
 	// walletSource describes where the relay signing wallet comes from
 	// ("mnemonic" or "keyfile") — shown in the portal settings section.
 	walletSource string
-	log          *slog.Logger
+	// fixedAddr, when non-nil, is the wallet's deterministic (AIP-11 sequence
+	// 0) receiving address — stable across restarts, safe to hand out.
+	fixedAddr []byte
+	log       *slog.Logger
 }
 
-func NewServer(network abelian.NetworkID, privacy abelian.AccountPrivacyLevel, wallet AddressAccount, walletSource string, log *slog.Logger) *Server {
-	return &Server{network: network, privacy: privacy, wallet: wallet, walletSource: walletSource, log: log}
+func NewServer(network abelian.NetworkID, privacy abelian.AccountPrivacyLevel, wallet AddressAccount, walletSource string, fixedAddr []byte, log *slog.Logger) *Server {
+	return &Server{network: network, privacy: privacy, wallet: wallet, walletSource: walletSource, fixedAddr: fixedAddr, log: log}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -87,13 +90,27 @@ type walletAddress struct {
 	Network    string `json:"network"`
 	Privacy    int    `json:"privacy_level"`
 	Source     string `json:"wallet_source"` // mnemonic | keyfile
-	Note       string `json:"note"`
+	// Stable: true means AddressHex is deterministic (same on every request
+	// and across restarts) — safe to share as THE funding address.
+	Stable bool   `json:"stable"`
+	Note   string `json:"note"`
 }
 
-// handleWalletAddress derives a fresh receiving address for the RELAY's own
-// wallet (root-seed accounts yield a different address per call by design;
-// all of them are detected by ReceiveCoin).
+// handleWalletAddress returns the relay wallet's receiving address. Mnemonic
+// wallets get the deterministic sequence-0 address (stable); key-file wallets
+// fall back to a fresh address per request (all detected by ReceiveCoin).
 func (s *Server) handleWalletAddress(w http.ResponseWriter, r *http.Request) {
+	if s.fixedAddr != nil {
+		writeJSON(w, walletAddress{
+			AddressHex: hex.EncodeToString(s.fixedAddr),
+			Network:    s.network.String(),
+			Privacy:    int(s.privacy),
+			Source:     s.walletSource,
+			Stable:     true,
+			Note:       "fixed funding address (deterministic, same across restarts) — share this one",
+		})
+		return
+	}
 	addr, err := s.wallet.GenerateAbelAddress()
 	if err != nil {
 		s.fail(w, "derive relay wallet address", err)
@@ -104,6 +121,7 @@ func (s *Server) handleWalletAddress(w http.ResponseWriter, r *http.Request) {
 		Network:    s.network.String(),
 		Privacy:    int(s.privacy),
 		Source:     s.walletSource,
+		Stable:     false,
 		Note:       "fund the relay by sending ABEL to this address (fresh per request; all belong to the relay wallet)",
 	})
 }

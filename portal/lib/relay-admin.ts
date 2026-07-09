@@ -13,6 +13,12 @@ export interface WalletAddress {
   privacy_level?: number;
   /** "mnemonic" | "keyfile" */
   wallet_source?: string;
+  /**
+   * true (mnemonic wallets): address_hex is deterministic — identical on
+   * every request and across restarts. false or missing (keyfile wallets):
+   * the address rotates per request.
+   */
+  stable?: boolean;
 }
 
 /** Readable label for the relay wallet's privacy level. Pure for testing. */

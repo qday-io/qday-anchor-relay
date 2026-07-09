@@ -93,15 +93,27 @@ export default async function AccountsPage() {
       <h2 className="section-title">要轉帳過去的帳號（注資地址）</h2>
       {wallet ? (
         <div className="card">
+          {wallet.stable ? (
+            <div className="field-label" style={{ marginTop: 0, marginBottom: 8 }}>
+              固定注資地址
+            </div>
+          ) : null}
           <div className="address-row">
             <HashWithCopy value={wallet.address_hex} head={18} tail={14} />
             <span className="muted mono address-net">{wallet.network}</span>
           </div>
-          <p className="muted address-note">
-            把測試 ABEL 轉到這個地址，就是幫 relay 錢包注資。這是同一個 relay
-            錢包的收款地址：每次載入頁面顯示的地址不同，但都屬於同一個 relay
-            錢包，皆可正常收款。
-          </p>
+          {wallet.stable ? (
+            <p className="muted address-note">
+              把測試 ABEL 轉到這個地址，就是幫 relay 錢包注資。這是 relay
+              錢包的固定收款地址（重啟也不變），可以直接把這個地址交給同事轉帳。
+            </p>
+          ) : (
+            <p className="muted address-note">
+              把測試 ABEL 轉到這個地址，就是幫 relay 錢包注資。這是同一個 relay
+              錢包的收款地址：每次載入頁面顯示的地址不同，但都屬於同一個 relay
+              錢包，皆可正常收款。
+            </p>
+          )}
           {wallet.note ? <p className="muted address-note">{wallet.note}</p> : null}
         </div>
       ) : (

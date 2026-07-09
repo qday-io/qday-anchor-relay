@@ -139,3 +139,38 @@ func TestLoadWallet_Errors(t *testing.T) {
 		t.Error("expected error for missing key file")
 	}
 }
+
+func TestFixedWalletAddress_StableAndValid(t *testing.T) {
+	mnemonic := generateTestMnemonic(t)
+	cfg := WalletConfig{Network: "testnet", Mnemonic: mnemonic, AccountPrivacy: "pseudonymous"}
+
+	addr1, ok, err := FixedWalletAddress(cfg)
+	if err != nil || !ok {
+		t.Fatalf("FixedWalletAddress: ok=%v err=%v", ok, err)
+	}
+	addr2, ok, err := FixedWalletAddress(cfg)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	if hex.EncodeToString(addr1) != hex.EncodeToString(addr2) {
+		t.Error("fixed address changed between calls")
+	}
+	if _, err := abelian.NewAbelAddress(addr1); err != nil {
+		t.Errorf("fixed address invalid: %v", err)
+	}
+	// Different mnemonic → different fixed address.
+	addr3, _, err := FixedWalletAddress(WalletConfig{Network: "testnet", Mnemonic: generateTestMnemonic(t), AccountPrivacy: "pseudonymous"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hex.EncodeToString(addr1) == hex.EncodeToString(addr3) {
+		t.Error("different mnemonics produced identical fixed addresses")
+	}
+}
+
+func TestFixedWalletAddress_KeyfileHasNone(t *testing.T) {
+	_, ok, err := FixedWalletAddress(WalletConfig{Network: "testnet", KeyFile: "/x.json", AccountPrivacy: "pseudonymous"})
+	if err != nil || ok {
+		t.Errorf("keyfile wallet: ok=%v err=%v, want ok=false", ok, err)
+	}
+}

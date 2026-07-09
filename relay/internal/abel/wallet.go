@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	abelian "github.com/pqabelian/abelian-sdk-go-v2/abelian"
+	"github.com/pqabelian/abelian-sdk-go-v2/abelian/crypto"
 )
 
 // WalletConfig is the wallet-relevant slice of config (avoids importing
@@ -70,6 +71,63 @@ func LoadWallet(cfg WalletConfig) (abelian.Account, error) {
 	default:
 		return nil, fmt.Errorf("abel: no wallet configured (mnemonic or key file required)")
 	}
+}
+
+// FixedWalletAddress derives a STABLE receiving address for a mnemonic wallet
+// by pinning the AIP-11 public randomness to sequence number 0 — the same
+// address on every call, suitable for handing to teammates for funding. Coins
+// sent to it are detected exactly like any other address of the wallet (the
+// detector key is derived from the same root seeds). Key-file wallets have no
+// public-rand root seed, so they return ok=false (rotating addresses only).
+func FixedWalletAddress(cfg WalletConfig) (addr []byte, ok bool, err error) {
+	if cfg.Mnemonic == "" {
+		return nil, false, nil
+	}
+	netID, err := networkID(cfg.Network)
+	if err != nil {
+		return nil, false, err
+	}
+	lvl, err := privacyLevel(cfg.AccountPrivacy)
+	if err != nil {
+		return nil, false, err
+	}
+	// Map account privacy to crypto-layer scheme/level (mirrors the SDK's
+	// unexported getCryptoSchemeAndPrivacyLevel for the two supported levels).
+	cryptoLvl := crypto.PrivacyLevelPseudonym
+	if lvl == abelian.AccountPrivacyLevelFullPrivacy {
+		cryptoLvl = crypto.PrivacyLevelFullPrivacyRand
+	}
+
+	words := strings.Fields(cfg.Mnemonic)
+	// Verified return-order remap — see loadFromMnemonic.
+	spend, sn, detector, view, err := abelian.MnemonicsToCryptoSeed(words)
+	if err != nil {
+		return nil, false, fmt.Errorf("abel: mnemonic to crypto seed: %w", err)
+	}
+	rootSeeds, err := crypto.NewRootSeeds(crypto.CryptoSchemePQRingCTX, cryptoLvl, spend, sn, view, detector)
+	if err != nil {
+		return nil, false, fmt.Errorf("abel: root seeds: %w", err)
+	}
+	rootSeedBytes, err := rootSeeds.Serialize()
+	if err != nil {
+		return nil, false, fmt.Errorf("abel: serialize root seeds: %w", err)
+	}
+
+	prRootSeed, err := abelian.MnemonicsToPublicRandRootSeed(words)
+	if err != nil {
+		return nil, false, fmt.Errorf("abel: public rand root seed: %w", err)
+	}
+	publicRand, err := abelian.SequenceNoToPublicRand(prRootSeed, 0)
+	if err != nil {
+		return nil, false, fmt.Errorf("abel: derive public rand: %w", err)
+	}
+
+	ka, err := crypto.GenerateCryptoKeysAndAddressByRootSeedsFromPublicRand(rootSeedBytes, publicRand)
+	if err != nil {
+		return nil, false, fmt.Errorf("abel: derive fixed address: %w", err)
+	}
+	abelAddr := abelian.NewAbelAddressFromCryptoAddress(netID, ka.CryptoAddress)
+	return abelAddr.Data(), true, nil
 }
 
 func loadFromMnemonic(netID abelian.NetworkID, lvl abelian.AccountPrivacyLevel, mnemonic string) (abelian.Account, error) {

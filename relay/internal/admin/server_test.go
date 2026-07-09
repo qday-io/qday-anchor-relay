@@ -22,7 +22,7 @@ type fakeWallet struct{ addr []byte }
 func (f fakeWallet) GenerateAbelAddress() ([]byte, error) { return f.addr, nil }
 
 func TestGenerateAccount(t *testing.T) {
-	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{}, "mnemonic", testLog)
+	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{}, "mnemonic", nil, testLog)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -55,7 +55,7 @@ func TestGenerateAccount(t *testing.T) {
 }
 
 func TestWalletAddress(t *testing.T) {
-	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{addr: []byte{0xab, 0xcd}}, "mnemonic", testLog)
+	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{addr: []byte{0xab, 0xcd}}, "mnemonic", nil, testLog)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -74,7 +74,7 @@ func TestWalletAddress(t *testing.T) {
 }
 
 func TestMethodRouting(t *testing.T) {
-	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{}, "mnemonic", testLog)
+	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{}, "mnemonic", nil, testLog)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -86,5 +86,25 @@ func TestMethodRouting(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == 200 {
 		t.Error("GET /admin/generate-account should not be allowed")
+	}
+}
+
+func TestWalletAddress_FixedWhenAvailable(t *testing.T) {
+	fixed := []byte{0x11, 0x22}
+	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{addr: []byte{0xab}}, "mnemonic", fixed, testLog)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/admin/wallet-address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var wa walletAddress
+	if err := json.NewDecoder(resp.Body).Decode(&wa); err != nil {
+		t.Fatal(err)
+	}
+	if wa.AddressHex != "1122" || !wa.Stable {
+		t.Errorf("wa = %+v, want fixed 1122 stable=true", wa)
 	}
 }

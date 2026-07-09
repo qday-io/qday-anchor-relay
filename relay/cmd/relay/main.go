@@ -115,9 +115,21 @@ func run(log *slog.Logger) error {
 		if cfg.Abel.WalletMnemonic == "" {
 			walletSource = "keyfile"
 		}
+		fixedAddr, hasFixed, err := abel.FixedWalletAddress(abel.WalletConfig{
+			Network:        cfg.Abel.Network,
+			Mnemonic:       cfg.Abel.WalletMnemonic,
+			KeyFile:        cfg.Abel.WalletKeyFile,
+			AccountPrivacy: cfg.Abel.AccountPrivacy,
+		})
+		if err != nil {
+			return err
+		}
+		if !hasFixed {
+			fixedAddr = nil
+		}
 		adminSrv := &http.Server{
 			Addr:    cfg.AdminAddr,
-			Handler: admin.NewServer(netID, privacy, account, walletSource, log).Handler(),
+			Handler: admin.NewServer(netID, privacy, account, walletSource, fixedAddr, log).Handler(),
 		}
 		go func() {
 			log.Info("admin api listening", "addr", cfg.AdminAddr)
