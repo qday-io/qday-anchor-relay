@@ -224,7 +224,12 @@ func (s *Scanner) scanTxOutputs(ctx context.Context, tx *abelian.Tx, block *abel
 		}
 		ok, value, err := s.receiver.ReceiveCoin(tx.Version, txOutData)
 		if err != nil {
-			return fmt.Errorf("abel: ReceiveCoin tx %s vout %d: %w", tx.TxID, idx, err)
+			// ReceiveCoin is pure crypto — an error means this TXO cannot be
+			// processed with our account's scheme (e.g. "Unsupported
+			// TxVersion" on legacy outputs), so it cannot be ours. Skip it;
+			// failing here would wedge the scanner on old chain history.
+			s.log.Debug("abel: skipping unreceivable txo", "tx", tx.TxID, "vout", idx, "err", err)
+			continue
 		}
 		if !ok {
 			continue

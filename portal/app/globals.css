@@ -559,6 +559,59 @@ table.detail tr:last-child td {
   color: var(--amber);
 }
 
+/* ── Accounts / relay admin ─────────────────── */
+
+.inline-error {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.callout-warning {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.generated-account {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+}
+
+.address-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.address-net {
+  font-size: 12px;
+}
+
+.address-note {
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+
 /* ── Error state ────────────────────────────── */
 
 .error-state {

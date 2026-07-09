@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/jobs", label: "Jobs" },
   { href: "/coins", label: "Coins" },
+  { href: "/accounts", label: "測試帳號" },
 ] as const;
 
 export function NavLinks() {

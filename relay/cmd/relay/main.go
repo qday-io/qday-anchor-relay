@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,8 +14,10 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
+	abelian "github.com/pqabelian/abelian-sdk-go-v2/abelian"
 
 	"github.com/qday/qday-anchor-relay/relay/internal/abel"
+	"github.com/qday/qday-anchor-relay/relay/internal/admin"
 	"github.com/qday/qday-anchor-relay/relay/internal/config"
 	"github.com/qday/qday-anchor-relay/relay/internal/da"
 	"github.com/qday/qday-anchor-relay/relay/internal/registry"
@@ -100,6 +103,31 @@ func run(log *slog.Logger) error {
 		worker.Worker{Name: "confirmer", Interval: abelTick, Tick: pipeline.ConfirmTick},
 		worker.Worker{Name: "recorder", Interval: abelTick, Tick: pipeline.RecordTick},
 	)
+
+	// Internal admin API (dev tooling; never published outside compose).
+	if cfg.AdminAddr != "" {
+		netID := abelian.NetName2NetID[cfg.Abel.Network]
+		privacy := abelian.AccountPrivacyLevelPseudonym
+		if cfg.Abel.AccountPrivacy == "full-privacy" {
+			privacy = abelian.AccountPrivacyLevelFullPrivacy
+		}
+		adminSrv := &http.Server{
+			Addr:    cfg.AdminAddr,
+			Handler: admin.NewServer(netID, privacy, account, log).Handler(),
+		}
+		go func() {
+			log.Info("admin api listening", "addr", cfg.AdminAddr)
+			if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("admin api failed", "err", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = adminSrv.Shutdown(shutdownCtx)
+		}()
+	}
 
 	log.Info("relay started",
 		"da_contract", cfg.DA.CommitContract,

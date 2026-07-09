@@ -59,6 +59,9 @@ type Config struct {
 	Abel             Abel
 	RetryMax         int
 	RetryBackoffBase time.Duration
+	// AdminAddr is the listen address of the internal admin HTTP API
+	// (compose-internal only; empty disables it).
+	AdminAddr string
 }
 
 var validNetworks = map[string]bool{
@@ -139,6 +142,7 @@ func Load(getenv Getenv) (*Config, error) {
 		},
 		RetryMax:         int(parseInt("RETRY_MAX", "5", 32)),
 		RetryBackoffBase: time.Duration(parseInt("RETRY_BACKOFF_BASE_SECONDS", "30", 64)) * time.Second,
+		AdminAddr:        optional("RELAY_ADMIN_ADDR", ":8081"),
 	}
 
 	if cfg.DA.ChainID == 0 {
