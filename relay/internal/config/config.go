@@ -28,9 +28,12 @@ type DA struct {
 	RPCURL         string
 	ChainID        int64
 	CommitContract string
-	ConfirmDepth   uint64
-	PollInterval   time.Duration
-	StartBlock     uint64
+	// RollupID filters VerifyBatchesTrustedAggregator's indexed rollupID
+	// (0 = accept all).【TO-CONFIRM】QDAY2's rollup id.
+	RollupID     uint32
+	ConfirmDepth uint64
+	PollInterval time.Duration
+	StartBlock   uint64
 }
 
 type Registry struct {
@@ -119,6 +122,7 @@ func Load(getenv Getenv) (*Config, error) {
 			RPCURL:         require("DA_RPC_URL"),
 			ChainID:        parseInt("DA_CHAIN_ID", "0", 64),
 			CommitContract: require("DA_COMMIT_CONTRACT"),
+			RollupID:       uint32(parseInt("DA_ROLLUP_ID", "0", 32)),
 			ConfirmDepth:   parseUint("DA_CONFIRM_DEPTH", "12"),
 			PollInterval:   time.Duration(parseInt("DA_POLL_INTERVAL_SECONDS", "10", 64)) * time.Second,
 			StartBlock:     parseUint("DA_START_BLOCK", "0"),

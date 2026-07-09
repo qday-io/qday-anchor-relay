@@ -57,7 +57,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer ethCli.Close()
-	commitSource, err := da.NewEventLogCommitSource(ethCli, common.HexToAddress(cfg.DA.CommitContract))
+	commitSource, err := da.NewEventLogCommitSource(ethCli, common.HexToAddress(cfg.DA.CommitContract), cfg.DA.RollupID)
 	if err != nil {
 		return err
 	}
@@ -111,9 +111,13 @@ func run(log *slog.Logger) error {
 		if cfg.Abel.AccountPrivacy == "full-privacy" {
 			privacy = abelian.AccountPrivacyLevelFullPrivacy
 		}
+		walletSource := "mnemonic"
+		if cfg.Abel.WalletMnemonic == "" {
+			walletSource = "keyfile"
+		}
 		adminSrv := &http.Server{
 			Addr:    cfg.AdminAddr,
-			Handler: admin.NewServer(netID, privacy, account, log).Handler(),
+			Handler: admin.NewServer(netID, privacy, account, walletSource, log).Handler(),
 		}
 		go func() {
 			log.Info("admin api listening", "addr", cfg.AdminAddr)

@@ -46,6 +46,7 @@ export function GenerateAccount() {
     <div className="card">
       <p className="muted address-note" style={{ marginTop: 0 }}>
         產生一組全新的 Abelian 測試帳號（mnemonic 與收款地址）。
+        這樣可以先自己建立測試帳號來測試轉帳。
       </p>
       <button
         type="button"

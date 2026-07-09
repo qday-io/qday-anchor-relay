@@ -24,11 +24,14 @@ type Server struct {
 	network abelian.NetworkID
 	privacy abelian.AccountPrivacyLevel
 	wallet  AddressAccount
-	log     *slog.Logger
+	// walletSource describes where the relay signing wallet comes from
+	// ("mnemonic" or "keyfile") — shown in the portal settings section.
+	walletSource string
+	log          *slog.Logger
 }
 
-func NewServer(network abelian.NetworkID, privacy abelian.AccountPrivacyLevel, wallet AddressAccount, log *slog.Logger) *Server {
-	return &Server{network: network, privacy: privacy, wallet: wallet, log: log}
+func NewServer(network abelian.NetworkID, privacy abelian.AccountPrivacyLevel, wallet AddressAccount, walletSource string, log *slog.Logger) *Server {
+	return &Server{network: network, privacy: privacy, wallet: wallet, walletSource: walletSource, log: log}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -82,6 +85,8 @@ func (s *Server) handleGenerateAccount(w http.ResponseWriter, r *http.Request) {
 type walletAddress struct {
 	AddressHex string `json:"address_hex"`
 	Network    string `json:"network"`
+	Privacy    int    `json:"privacy_level"`
+	Source     string `json:"wallet_source"` // mnemonic | keyfile
 	Note       string `json:"note"`
 }
 
@@ -97,6 +102,8 @@ func (s *Server) handleWalletAddress(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, walletAddress{
 		AddressHex: hex.EncodeToString(addr),
 		Network:    s.network.String(),
+		Privacy:    int(s.privacy),
+		Source:     s.walletSource,
 		Note:       "fund the relay by sending ABEL to this address (fresh per request; all belong to the relay wallet)",
 	})
 }

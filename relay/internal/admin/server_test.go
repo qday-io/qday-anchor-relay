@@ -22,7 +22,7 @@ type fakeWallet struct{ addr []byte }
 func (f fakeWallet) GenerateAbelAddress() ([]byte, error) { return f.addr, nil }
 
 func TestGenerateAccount(t *testing.T) {
-	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{}, testLog)
+	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{}, "mnemonic", testLog)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -55,7 +55,7 @@ func TestGenerateAccount(t *testing.T) {
 }
 
 func TestWalletAddress(t *testing.T) {
-	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{addr: []byte{0xab, 0xcd}}, testLog)
+	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{addr: []byte{0xab, 0xcd}}, "mnemonic", testLog)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -74,7 +74,7 @@ func TestWalletAddress(t *testing.T) {
 }
 
 func TestMethodRouting(t *testing.T) {
-	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{}, testLog)
+	srv := NewServer(abelian.TestNet, abelian.AccountPrivacyLevelPseudonym, fakeWallet{}, "mnemonic", testLog)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

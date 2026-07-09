@@ -141,6 +141,25 @@ export async function getCoins(): Promise<CoinRow[]> {
   );
 }
 
+export interface UnspentSummary {
+  /** Number of UNSPENT relay coins. */
+  count: number;
+  /** Total UNSPENT value in Neutrino, as a decimal string. */
+  totalNeutrino: string;
+}
+
+/** Spendable balance of the relay wallet (UNSPENT relay coins). */
+export async function getUnspentSummary(): Promise<UnspentSummary> {
+  const rows = await query<{ count: string; total: string }>(
+    `SELECT count(*) AS count, COALESCE(sum(value_neutrino), 0)::text AS total
+     FROM relay_coins WHERE status = 'UNSPENT'`,
+  );
+  return {
+    count: Number(rows[0]?.count ?? 0),
+    totalNeutrino: rows[0]?.total ?? "0",
+  };
+}
+
 export interface RelayHealth {
   pollerCursor: string | null;
   abelCursor: string | null;
@@ -156,15 +175,12 @@ export async function getRelayHealth(): Promise<RelayHealth> {
     query<{ last_scanned_height: string }>(
       `SELECT last_scanned_height FROM abel_cursor WHERE id = 1`,
     ),
-    query<{ count: string; total: string }>(
-      `SELECT count(*) AS count, COALESCE(sum(value_neutrino), 0)::text AS total
-       FROM relay_coins WHERE status = 'UNSPENT'`,
-    ),
+    getUnspentSummary(),
   ]);
   return {
     pollerCursor: poller[0]?.last_scanned_block ?? null,
     abelCursor: abel[0]?.last_scanned_height ?? null,
-    unspentCount: Number(unspent[0]?.count ?? 0),
-    unspentTotalNeutrino: unspent[0]?.total ?? "0",
+    unspentCount: unspent.count,
+    unspentTotalNeutrino: unspent.totalNeutrino,
   };
 }

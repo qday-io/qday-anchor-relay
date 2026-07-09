@@ -1,5 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { resolveRelayAdminUrl } from "./relay-admin";
+import {
+  privacyLevelLabel,
+  resolveRelayAdminUrl,
+  walletSourceLabel,
+} from "./relay-admin";
+
+describe("privacyLevelLabel", () => {
+  it("maps known levels to readable labels", () => {
+    expect(privacyLevelLabel(2)).toBe("Pseudonymous（假名）");
+    expect(privacyLevelLabel(1)).toBe("Full-privacy（完全隱私）");
+  });
+
+  it("falls back to a dash for unknown or missing levels", () => {
+    expect(privacyLevelLabel(0)).toBe("—");
+    expect(privacyLevelLabel(3)).toBe("—");
+    expect(privacyLevelLabel(undefined)).toBe("—");
+  });
+});
+
+describe("walletSourceLabel", () => {
+  it("maps known sources to readable labels", () => {
+    expect(walletSourceLabel("mnemonic")).toBe("Mnemonic（助記詞）");
+    expect(walletSourceLabel("keyfile")).toBe("Key file（金鑰檔）");
+  });
+
+  it("falls back to a dash for unknown or missing sources", () => {
+    expect(walletSourceLabel("hsm")).toBe("—");
+    expect(walletSourceLabel(undefined)).toBe("—");
+  });
+});
 
 describe("resolveRelayAdminUrl", () => {
   it("uses RELAY_ADMIN_URL when set", () => {

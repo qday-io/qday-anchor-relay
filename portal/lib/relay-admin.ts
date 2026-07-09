@@ -9,6 +9,24 @@ export interface WalletAddress {
   address_hex: string;
   network: string;
   note?: string;
+  /** 2 = pseudonymous, 1 = full-privacy. */
+  privacy_level?: number;
+  /** "mnemonic" | "keyfile" */
+  wallet_source?: string;
+}
+
+/** Readable label for the relay wallet's privacy level. Pure for testing. */
+export function privacyLevelLabel(level: number | undefined): string {
+  if (level === 2) return "Pseudonymous（假名）";
+  if (level === 1) return "Full-privacy（完全隱私）";
+  return "—";
+}
+
+/** Readable label for the relay wallet's key source. Pure for testing. */
+export function walletSourceLabel(source: string | undefined): string {
+  if (source === "mnemonic") return "Mnemonic（助記詞）";
+  if (source === "keyfile") return "Key file（金鑰檔）";
+  return "—";
 }
 
 export interface GeneratedAccount {
