@@ -8,13 +8,16 @@ export function RefreshButton() {
   const [isPending, startTransition] = useTransition();
 
   return (
-    <button
-      type="button"
-      className="btn"
-      disabled={isPending}
-      onClick={() => startTransition(() => router.refresh())}
-    >
-      {isPending ? "Refreshing…" : "Refresh"}
-    </button>
+    <>
+      <span className="muted auto-refresh-note">每 10 秒自動更新</span>
+      <button
+        type="button"
+        className="btn"
+        disabled={isPending}
+        onClick={() => startTransition(() => router.refresh())}
+      >
+        {isPending ? "Refreshing…" : "Refresh"}
+      </button>
+    </>
   );
 }

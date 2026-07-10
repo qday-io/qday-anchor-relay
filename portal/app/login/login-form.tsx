@@ -36,7 +36,9 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={onSubmit}>
+    // method/action: pre-hydration fallback must POST to the API route —
+    // never a native GET that would put credentials in the URL.
+    <form onSubmit={onSubmit} method="post" action="/api/auth/login">
       <div className="login-field">
         <label htmlFor="username">Username</label>
         <input

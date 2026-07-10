@@ -146,6 +146,11 @@ h3 {
   gap: 8px;
 }
 
+.auto-refresh-note {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .section-title {
   font-size: 13px;
   font-weight: 600;

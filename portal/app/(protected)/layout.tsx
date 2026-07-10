@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { NavLinks } from "@/components/NavLinks";
 import { isAuthenticated } from "@/lib/session";
 
@@ -15,6 +16,7 @@ export default async function ProtectedLayout({
 
   return (
     <>
+      <AutoRefresh />
       <header className="topnav">
         <div className="topnav-inner">
           <span className="brand">
