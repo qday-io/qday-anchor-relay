@@ -130,6 +130,21 @@ func FixedWalletAddress(cfg WalletConfig) (addr []byte, ok bool, err error) {
 	return abelAddr.Data(), true, nil
 }
 
+// ShortAddress derives the 68-byte short form (0xab 0xe0 … fingerprint+hash)
+// of a full Abel address — the format wallets accept and auto-resolve to the
+// full address when sending.
+func ShortAddress(fullAddress []byte) ([]byte, error) {
+	abelAddr, err := abelian.NewAbelAddress(fullAddress)
+	if err != nil {
+		return nil, fmt.Errorf("abel: parse full address: %w", err)
+	}
+	short, err := abelian.GetShortAbelAddressFromAbelAddress(abelAddr)
+	if err != nil {
+		return nil, fmt.Errorf("abel: derive short address: %w", err)
+	}
+	return short.Data(), nil
+}
+
 func loadFromMnemonic(netID abelian.NetworkID, lvl abelian.AccountPrivacyLevel, mnemonic string) (abelian.Account, error) {
 	words := strings.Fields(mnemonic)
 	// Verified return order (docs/sdk-verified-api.md): spend, serialNo,

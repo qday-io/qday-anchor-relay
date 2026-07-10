@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	abelian "github.com/pqabelian/abelian-sdk-go-v2/abelian"
+
+	"github.com/qday/qday-anchor-relay/relay/internal/abel"
 )
 
 // AddressAccount is the slice of abelian.Account the server needs.
@@ -87,9 +89,13 @@ func (s *Server) handleGenerateAccount(w http.ResponseWriter, r *http.Request) {
 
 type walletAddress struct {
 	AddressHex string `json:"address_hex"`
-	Network    string `json:"network"`
-	Privacy    int    `json:"privacy_level"`
-	Source     string `json:"wallet_source"` // mnemonic | keyfile
+	// ShortAddressHex is the 68-byte wallet-friendly short form (abe0…) that
+	// wallet apps auto-resolve to the full address. Empty when derivation
+	// fails.
+	ShortAddressHex string `json:"short_address_hex,omitempty"`
+	Network         string `json:"network"`
+	Privacy         int    `json:"privacy_level"`
+	Source          string `json:"wallet_source"` // mnemonic | keyfile
 	// Stable: true means AddressHex is deterministic (same on every request
 	// and across restarts) — safe to share as THE funding address.
 	Stable bool   `json:"stable"`
@@ -100,29 +106,34 @@ type walletAddress struct {
 // wallets get the deterministic sequence-0 address (stable); key-file wallets
 // fall back to a fresh address per request (all detected by ReceiveCoin).
 func (s *Server) handleWalletAddress(w http.ResponseWriter, r *http.Request) {
-	if s.fixedAddr != nil {
-		writeJSON(w, walletAddress{
-			AddressHex: hex.EncodeToString(s.fixedAddr),
-			Network:    s.network.String(),
-			Privacy:    int(s.privacy),
-			Source:     s.walletSource,
-			Stable:     true,
-			Note:       "fixed funding address (deterministic, same across restarts) — share this one",
-		})
-		return
+	addr := s.fixedAddr
+	stable := true
+	note := "fixed funding address (deterministic, same across restarts) — share this one"
+	if addr == nil {
+		fresh, err := s.wallet.GenerateAbelAddress()
+		if err != nil {
+			s.fail(w, "derive relay wallet address", err)
+			return
+		}
+		addr, stable = fresh, false
+		note = "fund the relay by sending ABEL to this address (fresh per request; all belong to the relay wallet)"
 	}
-	addr, err := s.wallet.GenerateAbelAddress()
-	if err != nil {
-		s.fail(w, "derive relay wallet address", err)
-		return
+
+	shortHex := ""
+	if short, err := abel.ShortAddress(addr); err != nil {
+		s.log.Warn("admin: short address derivation failed", "err", err)
+	} else {
+		shortHex = hex.EncodeToString(short)
 	}
+
 	writeJSON(w, walletAddress{
-		AddressHex: hex.EncodeToString(addr),
-		Network:    s.network.String(),
-		Privacy:    int(s.privacy),
-		Source:     s.walletSource,
-		Stable:     false,
-		Note:       "fund the relay by sending ABEL to this address (fresh per request; all belong to the relay wallet)",
+		AddressHex:      hex.EncodeToString(addr),
+		ShortAddressHex: shortHex,
+		Network:         s.network.String(),
+		Privacy:         int(s.privacy),
+		Source:          s.walletSource,
+		Stable:          stable,
+		Note:            note,
 	})
 }
 

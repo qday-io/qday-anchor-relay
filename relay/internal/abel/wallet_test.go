@@ -174,3 +174,26 @@ func TestFixedWalletAddress_KeyfileHasNone(t *testing.T) {
 		t.Errorf("keyfile wallet: ok=%v err=%v, want ok=false", ok, err)
 	}
 }
+
+func TestShortAddress(t *testing.T) {
+	cfg := WalletConfig{Network: "testnet", Mnemonic: generateTestMnemonic(t), AccountPrivacy: "pseudonymous"}
+	full, ok, err := FixedWalletAddress(cfg)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	short, err := ShortAddress(full)
+	if err != nil {
+		t.Fatalf("ShortAddress: %v", err)
+	}
+	if len(short) != 68 {
+		t.Errorf("short address length = %d, want 68 (v2)", len(short))
+	}
+	if short[0] != 0xab || short[1] != 0xe0 {
+		t.Errorf("short address prefix = %x %x, want ab e0", short[0], short[1])
+	}
+	// Deterministic: same full address → same short address.
+	short2, err := ShortAddress(full)
+	if err != nil || hex.EncodeToString(short) != hex.EncodeToString(short2) {
+		t.Error("short address not deterministic")
+	}
+}

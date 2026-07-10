@@ -98,10 +98,36 @@ export default async function AccountsPage() {
               固定注資地址
             </div>
           ) : null}
-          <div className="address-row">
-            <HashWithCopy value={wallet.address_hex} head={18} tail={14} />
-            <span className="muted mono address-net">{wallet.network}</span>
-          </div>
+          {wallet.short_address_hex ? (
+            <>
+              <div className="field-label" style={{ marginTop: 0 }}>
+                短地址（給錢包轉帳用）
+              </div>
+              <div className="address-row">
+                <HashWithCopy
+                  value={wallet.short_address_hex}
+                  head={18}
+                  tail={14}
+                />
+                <span className="muted mono address-net">{wallet.network}</span>
+              </div>
+              <p className="muted address-note">
+                把這個短地址貼到 Abelian 錢包的轉帳欄位，錢包會自動解析成完整地址。
+              </p>
+              <div className="field-label">完整地址</div>
+              <div className="address-row">
+                <HashWithCopy value={wallet.address_hex} head={18} tail={14} />
+              </div>
+              <p className="muted address-note">
+                若錢包無法解析短地址，改用完整地址。
+              </p>
+            </>
+          ) : (
+            <div className="address-row">
+              <HashWithCopy value={wallet.address_hex} head={18} tail={14} />
+              <span className="muted mono address-net">{wallet.network}</span>
+            </div>
+          )}
           {wallet.stable ? (
             <p className="muted address-note">
               把測試 ABEL 轉到這個地址，就是幫 relay 錢包注資。這是 relay

@@ -7,6 +7,12 @@
 
 export interface WalletAddress {
   address_hex: string;
+  /**
+   * Optional 68-byte short form (~136 hex chars, starts "abe0…"). When
+   * present, wallets can resolve it to the full address, so it is shown as
+   * the primary funding address.
+   */
+  short_address_hex?: string;
   network: string;
   note?: string;
   /** 2 = pseudonymous, 1 = full-privacy. */
