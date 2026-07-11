@@ -29,12 +29,12 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/crate-crypto/go-ipa v0.0.0-20240223125850-b1e8a79f509c // indirect
 	github.com/crate-crypto/go-kzg-4844 v1.0.0 // indirect
-	github.com/cryptosuite/kyber-go v0.0.2-alpha // indirect
+	github.com/cryptosuite/kyber-go v0.0.2-beta // indirect
 	github.com/cryptosuite/liboqs-go v0.9.5-alpha // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
-	github.com/edsrzf/mmap-go v1.1.0 // indirect
+	github.com/edsrzf/mmap-go v1.2.0 // indirect
 	github.com/ethereum/c-kzg-4844 v1.0.0 // indirect
 	github.com/ethereum/go-verkle v0.1.1-0.20240829091221-dffa7562dbe9 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
@@ -70,11 +70,11 @@ require (
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pqabelian/abec v1.0.1-0.20240914150420-bdd2c1c1808c // indirect
+	github.com/pqabelian/abec v1.0.1-0.20260126100013-7f1b38ecf449 // indirect
 	github.com/pqabelian/abelian-aip11-go v0.0.0-20241209075354-09202e9533a5 // indirect
 	github.com/pqabelian/abeutil v0.0.0-20231107022913-d6d3bf295938 // indirect
-	github.com/pqabelian/pqringct v0.0.0-20240724124001-42a8952f4b48 // indirect
-	github.com/pqabelian/pqringctx v0.0.0-20240724125306-0783f8ceef6b // indirect
+	github.com/pqabelian/pqringct v0.0.0-20260106052511-4eab9cc12d36 // indirect
+	github.com/pqabelian/pqringctx v0.0.0-20260126095639-079b510ff21f // indirect
 	github.com/prometheus/client_golang v1.12.0 // indirect
 	github.com/prometheus/client_model v0.2.1-0.20210607210712-147c58e9608a // indirect
 	github.com/prometheus/common v0.32.1 // indirect
@@ -100,3 +100,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+// Vendored with a patch: abec@main (Aconcagua, TxVersion 3) changed the
+// sdkapi/v2 CreateTransferTx* signatures; upstream SDK has not caught up.
+replace github.com/pqabelian/abelian-sdk-go-v2 => ./third_party/abelian-sdk-go-v2

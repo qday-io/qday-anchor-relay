@@ -1,0 +1,17 @@
+{
+  "network_id": 2,
+  "db_file_name": "abelian_sdk.db",
+  "rpc": {
+    "endpoint": "http://testnet-rpc-00.pqabelian.io",
+    "username": "J8y0OnkS2wx9XEgUlW5MqtoRDAQ=",
+    "password": "ULlXc/ZMJ375cn6VuSbtU+Y3KGQ="
+  },
+  "coin_scan": {
+    "start_height": 327083,
+    "end_height": 327133
+  },
+  "tx_track": {
+    "start_height": 327133,
+    "end_height": 327134
+  }
+}

@@ -30,6 +30,9 @@ COPY --from=liboqs /opt/liboqs /opt/liboqs
 ENV PKG_CONFIG_PATH=/opt/liboqs/lib/pkgconfig
 WORKDIR /src
 COPY go.mod go.sum ./
+# go.mod replaces the Abelian SDK with the patched vendored copy — it must be
+# present before `go mod download`.
+COPY third_party ./third_party
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 go build -o /out/relay ./cmd/relay

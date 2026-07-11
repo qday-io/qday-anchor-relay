@@ -1,0 +1,246 @@
+syntax = "proto3";
+package core;
+
+option go_package = "abelian.info/sdk/proto";
+option java_package = "info.abelian.sdk.proto";
+
+message TxInDescMessage {
+  int64 height = 1;
+  bytes blockID = 2;
+  uint32 txVersion = 3;
+  bytes txID = 4;
+  int32 index = 5;
+  bytes txOutData = 6;
+  int64 value = 7;
+  bytes coinSerialNumber = 8;
+}
+
+message TxOutDescMessage {
+  bytes abelAddress = 1;
+  int64 value = 2;
+}
+
+message BlockDescMessage {
+  bytes binData = 1;
+  int64 height = 2;
+}
+
+message GenerateEntropySeedArgs {
+}
+
+message GenerateEntropySeedResult {
+  bytes entropySeed = 1;
+}
+
+message EntropySeedToMnemonicsArgs {
+  bytes entropySeed = 1;
+}
+
+message EntropySeedToMnemonicsResult {
+  repeated string mnemonic = 1;
+}
+
+message MnemonicsToEntropySeedArgs {
+  repeated string mnemonic = 1;
+}
+
+message MnemonicsToEntropySeedResult {
+  bytes entropySeed = 1;
+}
+
+message EntropySeedToCryptoSeedArgs{
+  bytes entropySeed = 1;
+}
+
+message EntropySeedToCryptoSeedResult{
+  bytes spendKeyRootSeed = 1;
+  bytes serialNoKeyRootSeed = 2;
+  bytes viewKeyRootSeed = 3;
+  bytes detectorRootKey = 4;
+}
+
+message MnemonicsToCryptoSeedArgs{
+  repeated string mnemonic = 1;
+}
+message MnemonicsToCryptoSeedResult{
+  bytes spendKeyRootSeed = 1;
+  bytes serialNoKeyRootSeed = 2;
+  bytes viewKeyRootSeed = 3;
+  bytes detectorRootKey = 4;
+}
+
+message EntropySeedToPublicRandRootSeedArgs{
+  bytes entropySeed = 1;
+}
+
+message EntropySeedToPublicRandRootSeedResult{
+  bytes publicRandRootSeed = 1;
+}
+
+message MnemonicsToPublicRandRootSeedArgs{
+  repeated string mnemonic = 1;
+}
+message MnemonicsToPublicRandRootSeedResult{
+  bytes publicRandRootSeed = 1;
+}
+
+message GenerateSafeCryptoSeedArgs {
+  int32 privacyLevel = 1;
+}
+
+message GenerateSafeCryptoSeedResult {
+  bytes spendKeyRootSeed = 1;
+  bytes serialNoKeyRootSeed = 2;
+  bytes viewKeyRootSeed = 3;
+  bytes detectorRootKey = 4;
+}
+
+message GenerateCryptoKeysAndAddressByRootSeedsArgs {
+  bytes spendKeyRootSeed = 1;
+  bytes serialNoKeyRootSeed = 2;
+  bytes viewKeyRootSeed = 3;
+  bytes detectorRootKey = 4;
+  int32 privacyLevel = 5;
+}
+
+message GenerateCryptoKeysAndAddressByRootSeedsResult {
+  bytes spendSecretKey = 1;
+  bytes serialNoSecretKey = 2;
+  bytes viewSecretKey = 3;
+  bytes detectorKey = 4;
+  bytes cryptoAddress = 5;
+}
+
+message SequenceNoToPublicRandArgs{
+  bytes publicRandRootSeed = 1;
+  uint32 sequenceNo = 2;
+}
+
+message SequenceNoToPublicRandResult{
+  bytes publicRand = 1;
+}
+
+message GenerateCryptoKeysAndAddressByRootSeedsFromPublicRandArgs {
+  bytes spendKeyRootSeed = 1;
+  bytes serialNoKeyRootSeed = 2;
+  bytes viewKeyRootSeed = 3;
+  bytes detectorRootKey = 4;
+  int32 privacyLevel = 5;
+  bytes publicRand = 6;
+}
+
+message GenerateCryptoKeysAndAddressByRootSeedsFromPublicRandResult {
+  bytes spendSecretKey = 1;
+  bytes serialNoSecretKey = 2;
+  bytes viewSecretKey = 3;
+  bytes detectorKey = 4;
+  bytes cryptoAddress = 5;
+}
+
+message GetCoinAddressFromCryptoAddressArgs {
+  bytes cryptoAddress = 1;
+}
+
+message GetCoinAddressFromCryptoAddressResult {
+  bytes coinAddress = 1;
+}
+
+message ExtractPublicRandFromCoinAddressArgs {
+  bytes coinAddress = 1;
+}
+
+message ExtractPublicRandFromCoinAddressResult {
+  bytes publicRand = 1;
+}
+
+
+message GetAbelAddressFromCryptoAddressArgs {
+  bytes cryptoAddress = 1;
+  int32 chainID = 2;
+}
+
+message GetAbelAddressFromCryptoAddressResult {
+  bytes abelAddress = 1;
+}
+
+message GetCryptoAddressFromAbelAddressArgs {
+  bytes abelAddress = 1;
+}
+
+message GetCryptoAddressFromAbelAddressResult {
+  bytes cryptoAddress = 1;
+}
+
+message GetShortAbelAddressFromAbelAddressArgs {
+  bytes abelAddress = 1;
+}
+
+message GetShortAbelAddressFromAbelAddressResult {
+  bytes shortAbelAddress = 1;
+}
+
+message CoinReceiveFromTxOutDataArgs {
+  uint32 txVersion = 1;
+  bytes txOutData = 2;
+  uint32 accountPrivacyLevel = 3;
+  bytes coinDetectorRootKey = 4;
+  bytes coinViewSecretRootSeed = 5;
+}
+
+message CoinReceiveFromTxOutDataResult {
+  bool success = 1;
+  uint64 coinValue = 2;
+}
+
+message GenerateRawTxRequestArgs {
+  repeated TxInDescMessage txInDescs = 1;
+  repeated TxOutDescMessage txOutDescs = 2;
+  repeated BlockDescMessage txRingBlockDescs = 3;
+  int64 txFee = 4;
+}
+
+message GenerateRawTxRequestResult {
+  bytes data = 1;
+}
+
+message GenerateRawTxDataArgs {
+  bytes serializedTxRequest = 1;
+  repeated int32 privacyLevels = 2;
+  repeated bytes spendKeyRootSeeds = 3;
+  repeated bytes serialNoKeyRootSeeds = 4;
+  repeated bytes viewKeyRootSeeds = 5;
+  repeated bytes detectorRootKeys = 6;
+}
+
+message GenerateRawTxDataResult {
+  bytes data = 1;
+  bytes txid = 2;
+}
+
+message GenerateCoinSerialNumberArgs {
+  bytes txid = 1;
+  int32 index = 2;
+  bytes serialNoSecretRootSeed = 3;
+  repeated BlockDescMessage ringBlockDescs = 4;
+}
+
+message GenerateCoinSerialNumberResult {
+  bytes serialNumber = 1;
+}
+
+message GetFingerprintFromCoinAddressArgs {
+  bytes coinAddress = 1;
+}
+
+message GetFingerprintFromCoinAddressResult {
+  bytes fingerprint = 1;
+}
+
+message DecodeCoinAddressFromSerializedTxOutDataArgs {
+  uint32 txVersion = 1;
+  bytes serializedTxOutData = 2;
+}
+
+message DecodeCoinAddressFromSerializedTxOutDataResult {
+  bytes coinAddress = 1;
+}
