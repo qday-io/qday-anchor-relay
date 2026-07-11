@@ -49,10 +49,15 @@ type Abel struct {
 	TLSCertPath     string
 	ConfirmDepth    int64
 	ScanStartHeight int64
-	WalletMnemonic  string
-	WalletKeyFile   string
-	AccountPrivacy  string // pseudonymous | full-privacy
-	TxFeeNeutrino   int64
+	// ANSURL: Abelian Name Service base (e.g.
+	// https://testnet-ans.pqabelian.io/ans/v1). When set, the relay registers
+	// its funding address (and generated test accounts) so wallets can
+	// resolve the short form. Empty disables registration.
+	ANSURL         string
+	WalletMnemonic string
+	WalletKeyFile  string
+	AccountPrivacy string // pseudonymous | full-privacy
+	TxFeeNeutrino  int64
 }
 
 type Config struct {
@@ -139,6 +144,7 @@ func Load(getenv Getenv) (*Config, error) {
 			TLSCertPath:     getenv("ABEL_RPC_TLS_CERT_PATH"),
 			ConfirmDepth:    parseInt("ABEL_CONFIRM_DEPTH", "6", 64),
 			ScanStartHeight: parseInt("ABEL_SCAN_START_HEIGHT", "0", 64),
+			ANSURL:          strings.TrimRight(getenv("ABEL_ANS_URL"), "/"),
 			WalletMnemonic:  strings.TrimSpace(getenv("ABEL_WALLET_MNEMONIC")),
 			WalletKeyFile:   strings.TrimSpace(getenv("ABEL_WALLET_KEY_FILE")),
 			AccountPrivacy:  optional("ABEL_ACCOUNT_PRIVACY", "pseudonymous"),

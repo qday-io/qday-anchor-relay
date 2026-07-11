@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"os"
@@ -127,9 +128,27 @@ func run(log *slog.Logger) error {
 		if !hasFixed {
 			fixedAddr = nil
 		}
+		var ans admin.ANSRegistrar
+		if cfg.Abel.ANSURL != "" {
+			ansClient := abel.NewANSClient(cfg.Abel.ANSURL)
+			ans = ansClient
+			// Register the funding address at startup so its short form
+			// resolves in wallets (idempotent server-side).
+			if fixedAddr != nil {
+				go func() {
+					regCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+					defer cancel()
+					if short, err := ansClient.Register(regCtx, hex.EncodeToString(fixedAddr)); err != nil {
+						log.Error("ans: funding address registration failed", "err", err)
+					} else {
+						log.Info("ans: funding address registered", "short", short[:16]+"…")
+					}
+				}()
+			}
+		}
 		adminSrv := &http.Server{
 			Addr:    cfg.AdminAddr,
-			Handler: admin.NewServer(netID, privacy, account, walletSource, fixedAddr, log).Handler(),
+			Handler: admin.NewServer(netID, privacy, account, walletSource, fixedAddr, ans, log).Handler(),
 		}
 		go func() {
 			log.Info("admin api listening", "addr", cfg.AdminAddr)

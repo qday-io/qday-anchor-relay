@@ -6,6 +6,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
@@ -22,6 +23,12 @@ type AddressAccount interface {
 	GenerateAbelAddress() ([]byte, error)
 }
 
+// ANSRegistrar registers full addresses with the Abelian Name Service so the
+// short form resolves in wallets. Nil disables registration.
+type ANSRegistrar interface {
+	Register(ctx context.Context, fullAddressHex string) (shortAddressHex string, err error)
+}
+
 type Server struct {
 	network abelian.NetworkID
 	privacy abelian.AccountPrivacyLevel
@@ -32,11 +39,12 @@ type Server struct {
 	// fixedAddr, when non-nil, is the wallet's deterministic (AIP-11 sequence
 	// 0) receiving address — stable across restarts, safe to hand out.
 	fixedAddr []byte
+	ans       ANSRegistrar // nil = registration disabled
 	log       *slog.Logger
 }
 
-func NewServer(network abelian.NetworkID, privacy abelian.AccountPrivacyLevel, wallet AddressAccount, walletSource string, fixedAddr []byte, log *slog.Logger) *Server {
-	return &Server{network: network, privacy: privacy, wallet: wallet, walletSource: walletSource, fixedAddr: fixedAddr, log: log}
+func NewServer(network abelian.NetworkID, privacy abelian.AccountPrivacyLevel, wallet AddressAccount, walletSource string, fixedAddr []byte, ans ANSRegistrar, log *slog.Logger) *Server {
+	return &Server{network: network, privacy: privacy, wallet: wallet, walletSource: walletSource, fixedAddr: fixedAddr, ans: ans, log: log}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -47,10 +55,14 @@ func (s *Server) Handler() http.Handler {
 }
 
 type generatedAccount struct {
-	Mnemonic   string `json:"mnemonic"`
-	AddressHex string `json:"address_hex"`
-	Network    string `json:"network"`
-	Privacy    int    `json:"privacy_level"`
+	Mnemonic        string `json:"mnemonic"`
+	AddressHex      string `json:"address_hex"`
+	ShortAddressHex string `json:"short_address_hex,omitempty"`
+	// ANSRegistered: the address was registered with the name service, so the
+	// short form resolves in wallets.
+	ANSRegistered bool   `json:"ans_registered"`
+	Network       string `json:"network"`
+	Privacy       int    `json:"privacy_level"`
 }
 
 // handleGenerateAccount mints a brand-new AIP-11 test account. The mnemonic is
@@ -79,11 +91,29 @@ func (s *Server) handleGenerateAccount(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "derive address", err)
 		return
 	}
+	addrHex := hex.EncodeToString(addr)
+
+	shortHex := ""
+	if short, err := abel.ShortAddress(addr); err == nil {
+		shortHex = hex.EncodeToString(short)
+	}
+	// Register with ANS so the short form resolves in wallets right away.
+	ansOK := false
+	if s.ans != nil {
+		if _, err := s.ans.Register(r.Context(), addrHex); err != nil {
+			s.log.Warn("admin: ANS registration for generated account failed", "err", err)
+		} else {
+			ansOK = true
+		}
+	}
+
 	writeJSON(w, generatedAccount{
-		Mnemonic:   strings.Join(words, " "),
-		AddressHex: hex.EncodeToString(addr),
-		Network:    s.network.String(),
-		Privacy:    int(s.privacy),
+		Mnemonic:        strings.Join(words, " "),
+		AddressHex:      addrHex,
+		ShortAddressHex: shortHex,
+		ANSRegistered:   ansOK,
+		Network:         s.network.String(),
+		Privacy:         int(s.privacy),
 	})
 }
 
