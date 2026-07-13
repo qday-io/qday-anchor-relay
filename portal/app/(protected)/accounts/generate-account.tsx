@@ -3,13 +3,8 @@
 import { useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import { truncateMiddle } from "@/lib/format";
-
-interface GeneratedAccount {
-  mnemonic: string;
-  address_hex: string;
-  network: string;
-  privacy_level: number;
-}
+// Type-only import: erased at compile time, pulls no server code client-side.
+import type { GeneratedAccount } from "@/lib/relay-admin";
 
 export function GenerateAccount() {
   const [account, setAccount] = useState<GeneratedAccount | null>(null);
@@ -75,16 +70,51 @@ export function GenerateAccount() {
             <CopyButton value={account.mnemonic} />
           </div>
 
-          <div className="field-label">Address</div>
-          <div className="address-row">
-            <span className="hash-cell">
-              <span className="mono" title={account.address_hex}>
-                {truncateMiddle(account.address_hex, 18, 14)}
-              </span>
-              <CopyButton value={account.address_hex} />
-            </span>
-            <span className="muted mono address-net">{account.network}</span>
-          </div>
+          {account.short_address_hex ? (
+            <>
+              <div className="field-label">短地址</div>
+              <div className="address-row">
+                <span className="hash-cell">
+                  <span className="mono" title={account.short_address_hex}>
+                    {truncateMiddle(account.short_address_hex, 18, 14)}
+                  </span>
+                  <CopyButton value={account.short_address_hex} />
+                </span>
+                <span className="muted mono address-net">{account.network}</span>
+              </div>
+
+              <div className="field-label">完整地址</div>
+              <div className="address-row">
+                <span className="hash-cell">
+                  <span className="mono" title={account.address_hex}>
+                    {truncateMiddle(account.address_hex, 18, 14)}
+                  </span>
+                  <CopyButton value={account.address_hex} />
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="field-label">Address</div>
+              <div className="address-row">
+                <span className="hash-cell">
+                  <span className="mono" title={account.address_hex}>
+                    {truncateMiddle(account.address_hex, 18, 14)}
+                  </span>
+                  <CopyButton value={account.address_hex} />
+                </span>
+                <span className="muted mono address-net">{account.network}</span>
+              </div>
+            </>
+          )}
+
+          {account.ans_registered === true ? (
+            <p className="address-note ans-ok">已註冊 ANS，錢包可直接解析</p>
+          ) : account.ans_registered === false ? (
+            <p className="address-note error-text">
+              ANS 註冊失敗——錢包可能無法解析短地址，請改用完整地址
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>

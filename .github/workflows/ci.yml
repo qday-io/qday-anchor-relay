@@ -1,0 +1,236 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read # dorny/paths-filter uses the PR API on pull_request events
+
+env:
+  LIBOQS_REPO: https://github.com/cryptosuite/liboqs.git
+  # Stable on GitHub-hosted ubuntu runners; avoids sudo for `cmake --install`.
+  LIBOQS_PREFIX: /home/runner/.local/liboqs
+  MIGRATE_VERSION: v4.18.1 # keep in lockstep with docker-compose.yml
+
+jobs:
+  # ── Which parts of the monorepo changed? ─────────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      relay: ${{ steps.filter.outputs.relay }}
+      contracts: ${{ steps.filter.outputs.contracts }}
+      portal: ${{ steps.filter.outputs.portal }}
+    steps:
+      # Checkout is required for push events (git-diff mode); PRs use the API.
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            relay:
+              - 'relay/**'
+              - 'docker-compose.yml'
+              - '.github/workflows/ci.yml'
+            contracts:
+              - 'contracts/**'
+              - '.gitmodules'
+              - '.github/workflows/ci.yml'
+            portal:
+              - 'portal/**'
+              - 'docker-compose.yml'
+              - '.github/workflows/ci.yml'
+
+  # ── Go relay: cgo against the cryptosuite liboqs fork + DB integration ───
+  relay-test:
+    needs: changes
+    if: needs.changes.outputs.relay == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: anchor
+          POSTGRES_USER: anchor
+          POSTGRES_PASSWORD: anchor
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U anchor -d anchor"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: relay/go.mod
+          cache-dependency-path: relay/go.sum
+
+      # Cache the compiled fork, keyed on the fork repo's current HEAD so a
+      # new upstream commit invalidates the cache automatically.
+      - name: Resolve cryptosuite/liboqs HEAD
+        id: liboqs-ref
+        run: echo "sha=$(git ls-remote "$LIBOQS_REPO" HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache liboqs install
+        id: liboqs-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.LIBOQS_PREFIX }}
+          key: liboqs-${{ runner.os }}-${{ steps.liboqs-ref.outputs.sha }}
+
+      - name: Build cryptosuite liboqs fork
+        if: steps.liboqs-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build libssl-dev
+          git clone --depth 1 "$LIBOQS_REPO" "$RUNNER_TEMP/liboqs"
+          # The fork predates modern compilers; -Werror trips on new warnings
+          # (same workaround as relay/Dockerfile stage 1 and README 本機建置).
+          sed -i 's/add_compile_options(-Werror)/# -Werror disabled for modern toolchains/' \
+            "$RUNNER_TEMP/liboqs/.CMake/compiler_opts.cmake"
+          cmake -S "$RUNNER_TEMP/liboqs" -B "$RUNNER_TEMP/liboqs/build" -GNinja \
+            -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$LIBOQS_PREFIX"
+          cmake --build "$RUNNER_TEMP/liboqs/build"
+          cmake --install "$RUNNER_TEMP/liboqs/build"
+          mkdir -p "$LIBOQS_PREFIX/lib/pkgconfig"
+          printf '%s\n' \
+            "prefix=$LIBOQS_PREFIX" \
+            'Name: liboqs' \
+            'Description: cryptosuite fork of liboqs' \
+            'Version: 0.7.5' \
+            'Cflags: -I${prefix}/include' \
+            "Libs: -L\${prefix}/lib -Wl,-rpath,$LIBOQS_PREFIX/lib -loqs" \
+            > "$LIBOQS_PREFIX/lib/pkgconfig/liboqs.pc"
+
+      - name: Wire pkg-config for cgo
+        run: |
+          echo "PKG_CONFIG_PATH=$LIBOQS_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$LIBOQS_PREFIX/lib" >> "$GITHUB_ENV"
+
+      - name: Run migrations (golang-migrate)
+        run: |
+          curl -sSfL "https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}/migrate.linux-amd64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" migrate
+          "$RUNNER_TEMP/migrate" -path relay/migrations \
+            -database "postgres://anchor:anchor@localhost:5432/anchor?sslmode=disable" up
+
+      - name: Test relay
+        working-directory: relay
+        env:
+          CGO_ENABLED: "1"
+          TEST_DATABASE_URL: postgres://anchor:anchor@localhost:5432/anchor?sslmode=disable
+        run: |
+          go vet ./...
+          go test ./...
+
+  # ── Foundry contracts ─────────────────────────────────────────────────────
+  contracts-test:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # forge-std is a committed gitlink (contracts/lib/forge-std @ v1.16.2)
+          # — no `forge install` needed in CI.
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Build contracts
+        working-directory: contracts
+        run: forge build --sizes
+
+      - name: Test contracts
+        working-directory: contracts
+        run: forge test -vv
+
+  # ── Next.js portal ────────────────────────────────────────────────────────
+  portal-test:
+    needs: changes
+    if: needs.changes.outputs.portal == 'true'
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22 # matches portal/Dockerfile (node:22-alpine)
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Install dependencies
+        working-directory: portal
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: portal
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        working-directory: portal
+        run: npm test
+
+      # All pages are dynamic (revalidate = 0); no DB or secrets needed at
+      # build time (see portal/Dockerfile).
+      - name: Build
+        working-directory: portal
+        run: npm run build
+
+  # ── Docker images (validate Dockerfiles; no push) ─────────────────────────
+  docker-build:
+    needs: changes
+    if: needs.changes.outputs.relay == 'true' || needs.changes.outputs.portal == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v3
+
+      # build-push-action (not `docker compose build`) so buildx can use the
+      # GHA cache backend; the expensive liboqs stage is layer-cached.
+      - name: Build relay image
+        if: needs.changes.outputs.relay == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: relay
+          push: false
+          cache-from: type=gha,scope=relay
+          cache-to: type=gha,mode=max,scope=relay
+
+      - name: Build portal image
+        if: needs.changes.outputs.portal == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: portal
+          push: false
+          cache-from: type=gha,scope=portal
+          cache-to: type=gha,mode=max,scope=portal
+
+  # ── Aggregate gate: single required status for branch protection ─────────
+  ci-ok:
+    needs: [changes, relay-test, contracts-test, portal-test, docker-build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "results: $results"
+          case "$results" in
+            *failure*|*cancelled*) exit 1 ;;
+          esac

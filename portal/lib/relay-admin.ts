@@ -44,6 +44,13 @@ export function walletSourceLabel(source: string | undefined): string {
 export interface GeneratedAccount {
   mnemonic: string;
   address_hex: string;
+  /** Optional 68-byte short form (~136 hex chars, starts "abe0…"). */
+  short_address_hex?: string;
+  /**
+   * true: the account was registered with the Abelian Name Service, so
+   * wallets can resolve the short address form.
+   */
+  ans_registered?: boolean;
   network: string;
   privacy_level: number;
 }

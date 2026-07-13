@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	abelian "github.com/pqabelian/abelian-sdk-go-v2/abelian"
 )
@@ -224,12 +225,16 @@ func (s *Scanner) scanTxOutputs(ctx context.Context, tx *abelian.Tx, block *abel
 		}
 		ok, value, err := s.receiver.ReceiveCoin(tx.Version, txOutData)
 		if err != nil {
-			// ReceiveCoin is pure crypto — an error means this TXO cannot be
-			// processed with our account's scheme (e.g. "Unsupported
-			// TxVersion" on legacy outputs), so it cannot be ours. Skip it;
-			// failing here would wedge the scanner on old chain history.
-			s.log.Debug("abel: skipping unreceivable txo", "tx", tx.TxID, "vout", idx, "err", err)
-			continue
+			// Legacy outputs (pre-fork tx versions) cannot be ours — skip
+			// them silently or the scanner wedges on old chain history. Any
+			// OTHER ReceiveCoin error is unexpected (corrupt data, crypto
+			// failure): fail the tick so the cursor does NOT advance past a
+			// possibly-ours coin.
+			if strings.Contains(err.Error(), "Unsupported TxVersion") {
+				s.log.Debug("abel: skipping legacy-version txo", "tx", tx.TxID, "vout", idx)
+				continue
+			}
+			return fmt.Errorf("abel: ReceiveCoin tx %s vout %d: %w", tx.TxID, idx, err)
 		}
 		if !ok {
 			continue

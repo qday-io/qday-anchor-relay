@@ -63,6 +63,12 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	poller := da.NewPoller(commitSource, storeJobSink{st}, cfg.DA.ConfirmDepth, cfg.DA.StartBlock, log)
+	if cfg.DA.RollupID == 0 {
+		// batch_number is UNIQUE in the DB; a rollup manager multiplexes
+		// rollups, so without the filter the first event for batch N from ANY
+		// rollup wins silently.
+		log.Warn("DA_ROLLUP_ID is 0 (accept all rollups) — set QDAY2's rollup id before production use")
+	}
 
 	recorder, err := registry.NewRecorder(ethCli, common.HexToAddress(cfg.Registry.Address),
 		cfg.Registry.RelayerPrivateKey, cfg.DA.ChainID)
@@ -105,6 +111,43 @@ func run(log *slog.Logger) error {
 		worker.Worker{Name: "recorder", Interval: abelTick, Tick: pipeline.RecordTick},
 	)
 
+	// Wallet-derived facts used by both ANS registration and the admin API.
+	fixedAddr, hasFixed, err := abel.FixedWalletAddress(abel.WalletConfig{
+		Network:        cfg.Abel.Network,
+		Mnemonic:       cfg.Abel.WalletMnemonic,
+		KeyFile:        cfg.Abel.WalletKeyFile,
+		AccountPrivacy: cfg.Abel.AccountPrivacy,
+	})
+	if err != nil {
+		return err
+	}
+	if !hasFixed {
+		fixedAddr = nil
+	}
+
+	// ANS registration is independent of the admin API: the funding address
+	// must resolve in wallets regardless of dev tooling.
+	var ans admin.ANSRegistrar
+	if cfg.Abel.ANSURL != "" {
+		ansClient := abel.NewANSClient(cfg.Abel.ANSURL)
+		ans = ansClient
+		if fixedAddr != nil {
+			go func() {
+				regCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				short, err := ansClient.Register(regCtx, hex.EncodeToString(fixedAddr))
+				if err != nil {
+					log.Error("ans: funding address registration failed", "err", err)
+					return
+				}
+				if len(short) > 16 {
+					short = short[:16] + "…"
+				}
+				log.Info("ans: funding address registered", "short", short)
+			}()
+		}
+	}
+
 	// Internal admin API (dev tooling; never published outside compose).
 	if cfg.AdminAddr != "" {
 		netID := abelian.NetName2NetID[cfg.Abel.Network]
@@ -115,36 +158,6 @@ func run(log *slog.Logger) error {
 		walletSource := "mnemonic"
 		if cfg.Abel.WalletMnemonic == "" {
 			walletSource = "keyfile"
-		}
-		fixedAddr, hasFixed, err := abel.FixedWalletAddress(abel.WalletConfig{
-			Network:        cfg.Abel.Network,
-			Mnemonic:       cfg.Abel.WalletMnemonic,
-			KeyFile:        cfg.Abel.WalletKeyFile,
-			AccountPrivacy: cfg.Abel.AccountPrivacy,
-		})
-		if err != nil {
-			return err
-		}
-		if !hasFixed {
-			fixedAddr = nil
-		}
-		var ans admin.ANSRegistrar
-		if cfg.Abel.ANSURL != "" {
-			ansClient := abel.NewANSClient(cfg.Abel.ANSURL)
-			ans = ansClient
-			// Register the funding address at startup so its short form
-			// resolves in wallets (idempotent server-side).
-			if fixedAddr != nil {
-				go func() {
-					regCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-					defer cancel()
-					if short, err := ansClient.Register(regCtx, hex.EncodeToString(fixedAddr)); err != nil {
-						log.Error("ans: funding address registration failed", "err", err)
-					} else {
-						log.Info("ans: funding address registered", "short", short[:16]+"…")
-					}
-				}()
-			}
 		}
 		adminSrv := &http.Server{
 			Addr:    cfg.AdminAddr,

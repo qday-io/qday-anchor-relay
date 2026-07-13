@@ -144,7 +144,7 @@ func Load(getenv Getenv) (*Config, error) {
 			TLSCertPath:     getenv("ABEL_RPC_TLS_CERT_PATH"),
 			ConfirmDepth:    parseInt("ABEL_CONFIRM_DEPTH", "6", 64),
 			ScanStartHeight: parseInt("ABEL_SCAN_START_HEIGHT", "0", 64),
-			ANSURL:          strings.TrimRight(getenv("ABEL_ANS_URL"), "/"),
+			ANSURL:          strings.TrimRight(strings.TrimSpace(getenv("ABEL_ANS_URL")), "/"),
 			WalletMnemonic:  strings.TrimSpace(getenv("ABEL_WALLET_MNEMONIC")),
 			WalletKeyFile:   strings.TrimSpace(getenv("ABEL_WALLET_KEY_FILE")),
 			AccountPrivacy:  optional("ABEL_ACCOUNT_PRIVACY", "pseudonymous"),
@@ -152,7 +152,9 @@ func Load(getenv Getenv) (*Config, error) {
 		},
 		RetryMax:         int(parseInt("RETRY_MAX", "5", 32)),
 		RetryBackoffBase: time.Duration(parseInt("RETRY_BACKOFF_BASE_SECONDS", "30", 64)) * time.Second,
-		AdminAddr:        optional("RELAY_ADMIN_ADDR", ":8081"),
+		// Loopback by default: the admin API is unauthenticated. Compose sets
+		// RELAY_ADMIN_ADDR=:8081 explicitly (container network is isolated).
+		AdminAddr: optional("RELAY_ADMIN_ADDR", "127.0.0.1:8081"),
 	}
 
 	if cfg.DA.ChainID == 0 {

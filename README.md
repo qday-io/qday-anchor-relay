@@ -108,6 +108,22 @@ Relay（Go `relay/internal/anchor`）與 Portal（TS `portal/lib/memo.ts`）各�
 
 全部 SDK 事實來源：`docs/sdk-verified-api.md`（自 SDK 原始碼萃取，含檔案行號）。
 
+- **Aconcagua（TxVersion 3）**：testnet2 已跑 abec Aconcagua 分叉，官方 SDK pin 的舊 abec
+  只認 version 1–2（`ReceiveCoin` 會炸 `Unsupported TxVersion`）。本 repo 升級
+  `abec@main` 並 vendor SDK 於 `relay/third_party/abelian-sdk-go-v2`（go.mod replace），
+  補丁僅兩處：`CreateTransferTxByRootSeed/ByCryptoKeys` 多了開頭 `txVersion` 參數
+  （傳 `wire.TxVersion`）。上游 SDK 更新後可移除 vendor。
+- **固定注資地址**：mnemonic 錢包用 AIP-11 序號 0 的 public randomness 衍生確定性地址
+  （重啟不變）；key-file 錢包無此路徑，退回每次輪換。
+- **短地址 + ANS**：錢包轉帳用短地址（`abe0…`，68 bytes），但錢包靠 ANS 解析短→完整地址，
+  **未註冊的短地址收不到轉帳**。relay 啟動時自動註冊注資地址（`ABEL_ANS_URL`）；
+  portal 產生的測試帳號也自動註冊。
+- **內部 admin API**（`RELAY_ADMIN_ADDR`，預設 :8081）：僅 compose 內網，不對外開 port；
+  portal 過 session 驗證後代理。提供 wallet-address（含短地址）與 generate-account。
+- **真 commit 事件**：`PolygonRollupManager` 的 `VerifyBatchesTrustedAggregator`
+  （topic0 由 ABI 計算並以單元測試 pin 住）。`DA_ROLLUP_ID` 可過濾 indexed rollupID
+  （DB 的 `batch_number` UNIQUE 假設單一 rollup —— 多 rollup 共用 manager 時必填）。
+
 - **`Tx.Confirmations` 不可用**：SDK 結構體 tag 誤植為 `bson`，JSON 永遠解不出來。
   Confirmer 改用 `getblock` 的 `Block.Confirmations`（tag 正確），或 `tip - height + 1` 回退計算。
 - **AIP-11 參數順序**：`MnemonicsToCryptoSeed` 回傳 `(spend, sn, detector, view)`，
@@ -136,7 +152,7 @@ Relay（Go `relay/internal/anchor`）與 Portal（TS `portal/lib/memo.ts`）各�
 
 | # | 項目 | 誰確認 | 影響範圍 | 目前預設 |
 |---|------|--------|----------|----------|
-| C1 | DA commit 合約地址 + 事件 ABI | Vike | `relay/internal/da/eventlog.go` 一個檔案 | 假設事件 `BatchCommitted(uint64 indexed, bytes32)` |
+| C1 | ~~DA commit 合約地址 + 事件 ABI~~ ✅ 已確認 | Vike | `PolygonRollupManager` / `VerifyBatchesTrustedAggregator` | 已實作並實測（batch 221 全程 DONE） |
 | C2 | DA RPC endpoint、chain ID、relayer gas 注資 | 團隊夥伴 | `.env` | 空值（啟動時驗證必填） |
 | C3 | Abelian endpoint（testnet/mainnet）與 RPC 憑證 | Morris | `.env` | 空值 |
 | C4 | 錢包形式：mnemonic 或 key material；privacy level | Morris | `.env`（兩種 loader 都已實作） | `pseudonymous` |

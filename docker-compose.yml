@@ -34,6 +34,7 @@ services:
     env_file: .env
     environment:
       POSTGRES_HOST: postgres
+      RELAY_ADMIN_ADDR: ":8081" # container network only; never published
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -42,9 +43,21 @@ services:
   portal:
     build:
       context: ./portal
-    env_file: .env
+    # Deliberately NO env_file: the portal is the only internet-facing
+    # container and must not receive relay secrets (wallet mnemonic, relayer
+    # private key). Only what it needs, interpolated from .env:
     environment:
       POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-anchor}
+      PORTAL_DB_USER: ${PORTAL_DB_USER:-portal_ro}
+      PORTAL_DB_PASSWORD: ${PORTAL_DB_PASSWORD:?}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?}
+      SESSION_SECRET: ${SESSION_SECRET:?}
+      ABEL_EXPLORER_BASE: ${ABEL_EXPLORER_BASE:-}
+      DA_EXPLORER_BASE: ${DA_EXPLORER_BASE:-}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
       RELAY_ADMIN_URL: http://relay:8081
     ports:
       - "${PORTAL_PORT:-3000}:3000"

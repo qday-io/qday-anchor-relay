@@ -145,8 +145,15 @@ func (s *Server) handleWalletAddress(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, "derive relay wallet address", err)
 			return
 		}
-		addr, stable = fresh, false
-		note = "fund the relay by sending ABEL to this address (fresh per request; all belong to the relay wallet)"
+		addr = fresh
+		// Key-file wallets (CryptoKeysAccount) hold ONE crypto address — the
+		// derived address is constant, hence also stable.
+		if s.walletSource == "keyfile" {
+			note = "fixed funding address (key-file wallets have a single constant address)"
+		} else {
+			stable = false
+			note = "fund the relay by sending ABEL to this address (fresh per request; all belong to the relay wallet)"
+		}
 	}
 
 	shortHex := ""

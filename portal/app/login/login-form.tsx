@@ -2,10 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 
-export function LoginForm() {
+export function LoginForm({ initialError }: { initialError?: string }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
   const [pending, setPending] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {

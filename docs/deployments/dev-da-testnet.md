@@ -20,13 +20,19 @@
   3 筆 PENDING（state root 比對正確）→ portal dashboard 顯示。
 - Submitter 等待語義：無 Abelian 資金時記 `submit waiting`，不消耗 retry 額度。
 
-## 尚缺（無法繼續 pipeline 的原因）
+## 更新（2026-07-13）：端對端已通
 
-1. **Abelian testnet RPC endpoint + 憑證**（C3）— `.env` 目前是 placeholder。
-2. **Relay 錢包注資** — dev mnemonic 已生成（見本機 `.env`），地址需先收到轉帳
-   （非 coinbase）才有 coin 可花。
-3. **真 commit 合約 ABI**（C1）— 現在指向 mock；Vike 提供後改
-   `relay/internal/da/eventlog.go` + `.env` 的 `DA_COMMIT_CONTRACT`。
+上面「尚缺」三項全部解決：
+
+| 項目 | 值 |
+|---|---|
+| Abelian RPC | `https://testnet2-rpc-00.pqabelian.io`（Aconcagua，TxVersion 3） |
+| 真 commit 來源 | `PolygonRollupManager` `0x959922bE…07B1` / `VerifyBatchesTrustedAggregator` |
+| 注資 | 30,000 ABEL（tx `3a0c6b6d…371c`，固定地址 + ANS 已註冊） |
+| **第一筆完整錨定** | batch 221：Abel tx `8fa60aad…514b` @737568 → record tx `0x536565…babc` → **DONE**（全程 7 分鐘） |
+
+鏈上驗證：`anchorOf(0x898007fd…) = (221, 8fa60aad…, 737568, …)`；Abel memo =
+`QDAY2ANCHOR|v1|221|0x898007fd…`。
 
 ## 注意
 

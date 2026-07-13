@@ -148,13 +148,13 @@ func (s *Store) SetCoinSerial(ctx context.Context, coinID, serialHex, ringID str
 	return err
 }
 
-// MarkCoinSpentBySerial flags the coin carrying this serial number as SPENT —
-// scanner-side spend detection from chain tx inputs. Returns whether a coin
-// matched.
+// MarkCoinSpentBySerial flags the coin carrying this serial number as SPENT
+// and records that the spend was OBSERVED ON CHAIN (a tx Vin carried the
+// serial). Returns whether a coin matched.
 func (s *Store) MarkCoinSpentBySerial(ctx context.Context, serialHex string) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE relay_coins SET status = 'SPENT', updated_at = now()
-		WHERE serial_number = $1 AND status <> 'SPENT'`, serialHex)
+		UPDATE relay_coins SET status = 'SPENT', spent_seen_on_chain = true, updated_at = now()
+		WHERE serial_number = $1 AND (status <> 'SPENT' OR NOT spent_seen_on_chain)`, serialHex)
 	if err != nil {
 		return false, err
 	}
@@ -162,11 +162,12 @@ func (s *Store) MarkCoinSpentBySerial(ctx context.Context, serialHex string) (bo
 }
 
 // ResurrectCoinsSpentByJob returns a job's SPENT/LOCKED coins to UNSPENT —
-// used when the job's Abelian tx is declared lost (the coins were never
-// actually consumed on chain).
+// used when the job's Abelian tx is declared lost. Coins whose spend was
+// already observed on chain are excluded: that spend is real, resurrecting
+// them would set up a doomed double-spend.
 func (s *Store) ResurrectCoinsSpentByJob(ctx context.Context, jobID int64) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE relay_coins SET status = 'UNSPENT', spent_by_job = NULL, updated_at = now()
-		WHERE spent_by_job = $1 AND status IN ('SPENT', 'LOCKED')`, jobID)
+		WHERE spent_by_job = $1 AND status IN ('SPENT', 'LOCKED') AND NOT spent_seen_on_chain`, jobID)
 	return err
 }

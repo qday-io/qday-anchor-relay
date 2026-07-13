@@ -76,12 +76,12 @@ func (s *CryptoSeeds) PublicRand() []byte {
 	return s.publicRand
 }
 
+// String is PATCHED vs upstream: the original hex-dumped every root seed
+// (spend key material included), so any stray %v of a CryptoSeeds would leak
+// wallet secrets into logs. Redacted deliberately.
 func (s *CryptoSeeds) String() string {
-	return fmt.Sprintf("%s{%d|%d}{%x|%x|%x|%x|%x}",
-		s.seedsType.String(), s.cryptoScheme, s.privacyLevel,
-		s.coinSpendKeySeed, s.coinValueKeySeed,
-		s.coinValueKeySeed, s.coinDetectorKey,
-		s.publicRand)
+	return fmt.Sprintf("%s{%d|%d}{seeds:REDACTED}",
+		s.seedsType.String(), s.cryptoScheme, s.privacyLevel)
 }
 
 func (s *CryptoSeeds) Validate() error {

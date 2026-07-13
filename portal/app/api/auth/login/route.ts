@@ -17,7 +17,24 @@ function trustProxyHeaders(): boolean {
   return value === "true" || value === "1";
 }
 
+/**
+ * Accepts application/json (the hydrated client form) and
+ * application/x-www-form-urlencoded (pre-hydration/no-JS native submit).
+ * The form flow responds with 303 redirects because the browser needs a
+ * navigation; the JSON flow keeps its JSON status responses.
+ */
 export async function POST(request: NextRequest) {
+  const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
+  const isJson = contentType.includes("application/json");
+  const isForm = contentType.includes("application/x-www-form-urlencoded");
+  if (!isJson && !isForm) {
+    // Unsupported media type: reject without burning a rate-limit failure.
+    return NextResponse.json(
+      { error: "Unsupported content type." },
+      { status: 415 },
+    );
+  }
+
   const limiter = getLoginRateLimiter();
   const { key, maxFailures } = resolveLoginKey({
     trustProxyHeaders: trustProxyHeaders(),
@@ -25,8 +42,12 @@ export async function POST(request: NextRequest) {
     realIp: request.headers.get("x-real-ip"),
   });
 
+  const formFailureRedirect = () =>
+    NextResponse.redirect(new URL("/login?error=1", request.url), 303);
+
   const gate = limiter.check(key, Date.now(), maxFailures);
   if (!gate.allowed) {
+    if (isForm) return formFailureRedirect();
     const retryAfterSeconds = Math.ceil(gate.retryAfterMs / 1000);
     return NextResponse.json(
       { error: "Too many failed attempts. Try again later." },
@@ -34,15 +55,24 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const body = await request.json().catch(() => null);
-  const username =
-    body && typeof body.username === "string" ? body.username : "";
-  const password =
-    body && typeof body.password === "string" ? body.password : "";
+  let username = "";
+  let password = "";
+  if (isJson) {
+    const body = await request.json().catch(() => null);
+    username = body && typeof body.username === "string" ? body.username : "";
+    password = body && typeof body.password === "string" ? body.password : "";
+  } else {
+    const form = await request.formData().catch(() => null);
+    const u = form?.get("username");
+    const p = form?.get("password");
+    username = typeof u === "string" ? u : "";
+    password = typeof p === "string" ? p : "";
+  }
 
   const valid = await verifyCredentials(username, password);
   if (!valid) {
     limiter.recordFailure(key, Date.now(), maxFailures);
+    if (isForm) return formFailureRedirect();
     return NextResponse.json(
       { error: "Invalid username or password." },
       { status: 401 },
@@ -55,5 +85,8 @@ export async function POST(request: NextRequest) {
   session.loggedInAt = Date.now();
   await session.save();
 
+  if (isForm) {
+    return NextResponse.redirect(new URL("/dashboard", request.url), 303);
+  }
   return NextResponse.json({ ok: true });
 }

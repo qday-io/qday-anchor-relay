@@ -51,6 +51,9 @@ func (c *ANSClient) Register(ctx context.Context, fullAddressHex string) (shortA
 		return "", fmt.Errorf("abel: ans register: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("abel: ans register: HTTP %d", resp.StatusCode)
+	}
 
 	var parsed ansRegisterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
