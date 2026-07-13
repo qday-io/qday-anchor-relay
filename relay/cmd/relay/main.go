@@ -46,6 +46,13 @@ func run(log *slog.Logger) error {
 	defer stop()
 
 	// ── Postgres ─────────────────────────────────────────
+	// Self-migrate on startup (embedded SQL; idempotent). Image-based deploys
+	// need no separate migrate service.
+	if err := store.Migrate(cfg.Postgres.DSN()); err != nil {
+		return err
+	}
+	log.Info("database migrations up to date")
+
 	st, err := store.New(ctx, cfg.Postgres.DSN())
 	if err != nil {
 		return err

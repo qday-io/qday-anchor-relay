@@ -16,18 +16,8 @@ services:
       timeout: 3s
       retries: 10
 
-  migrate:
-    image: migrate/migrate:v4.18.1
-    volumes:
-      - ./relay/migrations:/migrations:ro
-    command:
-      - "-path=/migrations"
-      - "-database=postgres://${POSTGRES_USER:-anchor}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-anchor}?sslmode=disable"
-      - "up"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
+  # Migrations are embedded in the relay binary and applied at startup
+  # (idempotent) — no separate migrate service needed.
   relay:
     build:
       context: ./relay
@@ -36,8 +26,8 @@ services:
       POSTGRES_HOST: postgres
       RELAY_ADMIN_ADDR: ":8081" # container network only; never published
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   portal:

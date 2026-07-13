@@ -36,14 +36,14 @@ open http://localhost:3000        # portal（帳密登入）
 ```
 
 只有 portal 對外開 port；relay 與 postgres 走 compose 內部網路。migration 由
-`migrate/migrate` one-shot container 於 postgres healthy 後自動執行。
+migrations 內嵌在 relay binary，啟動時自動套用（冪等），不需要 migrate service。
 
 ## Make targets
 
 | target | 作用 |
 |---|---|
 | `make up` / `make down` / `make logs` | docker compose 起停/看 log |
-| `make migrate` | 手動重跑 migrations |
+| `make migrate DATABASE_URL=…` | 對任意 DB 手動套 migrations（relay 啟動本來就會自動套） |
 | `make test` | relay Go 測試 + contracts Foundry 測試 |
 | `make test-relay` | 需要 liboqs fork（見下）；DB 整合測試需 `TEST_DATABASE_URL` |
 | `make test-contracts` | `forge test` |

@@ -20,8 +20,12 @@ logs:
 	docker compose logs -f
 
 # Run migrations against a locally reachable Postgres (compose runs them automatically).
+# Migrations are embedded in the relay binary and applied automatically at
+# startup. This target only exists for applying them to an arbitrary DB
+# (e.g. the local test postgres) without starting the relay.
 migrate:
-	docker compose run --rm migrate
+	docker run --rm -v $(PWD)/relay/migrations:/migrations:ro migrate/migrate:v4.18.1 \
+		-path=/migrations -database "$(DATABASE_URL)" up
 
 test: test-relay test-contracts
 
