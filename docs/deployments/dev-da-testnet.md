@@ -7,7 +7,7 @@
 |---|---|
 | DA RPC | `http://159.138.121.45:1545` |
 | Chain ID | `31337` |
-| QDayAnchorRegistry | `0x59b670e9fA9D0A427751Af201D676719a970857b` |
+| QDayAnchorRegistry | `0x564Db7a11653228164FD03BcA60465270E67b3d7`（2026-07-14 重部署——舊 registry `0x59b670e9…857b` 含手動測試資料 `rootOfBatch(1)=0x1111…`，與 rollup 重編號後的真 batch 1 衝突）|
 | MockBatchCommitter（暫代 commit 合約） | `0xa85233C63b9Ee964Add6F2cffe00Fd84eb32338f` |
 | Relayer EOA（已 setRelayer） | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` |
 | Portal | `http://localhost:3100`（本機 compose；帳號 admin） |
