@@ -12,13 +12,22 @@ export function sessionOptions(): SessionOptions {
   if (!secret || secret.length < 32) {
     throw new Error("SESSION_SECRET must be set and at least 32 characters long");
   }
+  // Secure defaults to on in production, but plain-HTTP deployments (e.g. a
+  // testnet server reached by IP without TLS) must be able to turn it off —
+  // browsers silently drop Secure cookies on http:// origins other than
+  // localhost, which breaks login with no visible error.
+  const secureEnv = process.env.SESSION_COOKIE_SECURE;
+  const secure =
+    secureEnv !== undefined && secureEnv !== ""
+      ? secureEnv === "true" || secureEnv === "1"
+      : process.env.NODE_ENV === "production";
   return {
     cookieName: SESSION_COOKIE_NAME,
     password: secret,
     cookieOptions: {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure,
       path: "/",
     },
   };
