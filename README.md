@@ -1,71 +1,77 @@
 # qday-anchor-relay
 
-QDAY2 ↔ Abelian commit anchoring relay（Sprint 5 · AbelianPlusNode）。
+QDAY2 ↔ Abelian commit anchoring relay (Sprint 5 · AbelianPlusNode).
 
-以 **commit（zkRollup state root）為單位**，把 QDAY DA 鏈上的 batch commit 錨定到 Abelian 鏈（交易 memo），
-確認後回寫 DA 側 `QDayAnchorRegistry` 合約，完成雙向錨定。規格見 `doc/qday-anchor-relay-spec.md`。
+Anchors QDAY DA-chain batch commits — one **commit = one zkRollup state root** — onto the
+Abelian chain (as a transaction memo), then, once confirmed, records the result back into the
+`QDayAnchorRegistry` contract on the DA side, completing a two-way anchor. Full specification:
+`doc/qday-anchor-relay-spec.md`.
 
 ```
 ┌─────────────┐   eth_getLogs    ┌─────────────────────────── relay ───────────────────────────┐
 │ QDAY DA Node │ ───────────────▶ │ Poller ─▶ anchor_jobs(PENDING)                               │
-│  (EVM)       │                  │             │ Submitter：memo tx（QDAY2ANCHOR|v1|batch|root） │
+│  (EVM)       │                  │             │ Submitter: memo tx (QDAY2ANCHOR|v1|batch|root) │
 └─────▲───────┘                  │             ▼                                                │
-      │ recordAnchor             │        ABEL_SUBMITTED ─▶ Confirmer（N confirmations）         │
+      │ recordAnchor             │        ABEL_SUBMITTED ─▶ Confirmer (N confirmations)         │
       │                          │             ▼                                                │
 ┌─────┴──────────────┐           │        ABEL_CONFIRMED ─▶ Recorder ─▶ CONTRACT_RECORDED ─▶ DONE│
 │ QDayAnchorRegistry │ ◀──────── │                                                              │
 └────────────────────┘           └───────────────┬──────────────────────────────────────────────┘
                                                  │ SendRawTx(memo)        ┌──────────────┐
                                                  └───────────────────────▶│ Abelian node │
-                                  Postgres ◀─── portal（唯讀後台, :3000）  └──────────────┘
+                                  Postgres ◀─── portal (read-only, :3000) └──────────────┘
 ```
 
-第三方驗證路徑：讀 `QDayAnchorRegistry` 的 `Anchored` event → 取 `abelTxHash` → Abelian RPC
-`getrawtransaction` 的 `memo` 欄位（hex）→ 解碼比對 state root。
+Third-party verification path: read the `Anchored` event from `QDayAnchorRegistry` → take
+`abelTxHash` → fetch the transaction via Abelian RPC `getrawtransaction` and read its `memo`
+field (hex) → decode and compare the state root.
 
-## 快速啟動
+## Quick start
 
 ```bash
 cp .env.example .env
-# 填入必要值（見下方待確認清單）；產生 admin 密碼 hash：
+# Fill in the required values (see the to-confirm list below). Generate the admin password hash:
 node -e "console.log(require('bcryptjs').hashSync(process.argv[1], 12))" 'your-password'
-# SESSION_SECRET：openssl rand -hex 32
+# SESSION_SECRET: openssl rand -hex 32
 
 docker compose up -d --build
-open http://localhost:3000        # portal（帳密登入）
+open http://localhost:3000        # portal (username/password login)
 ```
 
-只有 portal 對外開 port；relay 與 postgres 走 compose 內部網路。migration 由
-migrations 內嵌在 relay binary，啟動時自動套用（冪等），不需要 migrate service。
+Only the portal publishes a port; the relay and postgres stay on the internal compose network.
+Migrations are embedded in the relay binary and applied automatically at startup (idempotent) —
+no separate migrate service.
 
 ## Make targets
 
-| target | 作用 |
+| target | purpose |
 |---|---|
-| `make up` / `make down` / `make logs` | docker compose 起停/看 log |
-| `make migrate DATABASE_URL=…` | 對任意 DB 手動套 migrations（relay 啟動本來就會自動套） |
-| `make test` | relay Go 測試 + contracts Foundry 測試 |
-| `make test-relay` | 需要 liboqs fork（見下）；DB 整合測試需 `TEST_DATABASE_URL` |
+| `make up` / `make down` / `make logs` | start/stop compose, tail logs |
+| `make migrate DATABASE_URL=…` | apply migrations to an arbitrary DB manually (the relay already self-migrates at startup) |
+| `make test` | relay Go tests + contracts Foundry tests |
+| `make test-relay` | requires the liboqs fork (see below); DB integration tests need `TEST_DATABASE_URL` |
 | `make test-contracts` | `forge test` |
-| `make abigen` | 重新產生 `QDayAnchorRegistry` 的 Go binding |
+| `make abigen` | regenerate the Go binding for `QDayAnchorRegistry` |
 
-## 本機建置：cryptosuite liboqs fork（重要）
+## Local builds: the cryptosuite liboqs fork (important)
 
-**`CGO_ENABLED=0` 不可行。** `abelian-sdk-go-v2` 依賴 `cryptosuite/liboqs-go`（cgo binding），
-且其呼叫 `OQS_KEM_keypair_with_recovery` —— 這是 **cryptosuite fork 專屬 API**，
-上游 liboqs（brew 版）沒有。Docker build 已內建處理（`relay/Dockerfile` stage 1）。本機開發：
+**`CGO_ENABLED=0` is not possible.** `abelian-sdk-go-v2` depends on `cryptosuite/liboqs-go`
+(a cgo binding) which calls `OQS_KEM_keypair_with_recovery` — an API that exists **only in the
+cryptosuite fork**; upstream liboqs (the brew package) does not have it. The Docker build
+handles this automatically (`relay/Dockerfile` stage 1). For local development:
 
 ```bash
 git clone --depth 1 https://github.com/cryptosuite/liboqs.git
-# fork 較舊，新版 clang 會踩 -Werror：註解掉 .CMake/compiler_opts.cmake 的 add_compile_options(-Werror)
+# The fork predates modern compilers; -Werror trips on new warnings:
+# comment out add_compile_options(-Werror) in .CMake/compiler_opts.cmake
 cmake -S liboqs -B liboqs/build -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON \
       -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/.local/liboqs
 cmake --build liboqs/build -j8 && cmake --install liboqs/build
-# 寫一個 liboqs.pc 到 $HOME/.local/liboqs/lib/pkgconfig（參考 relay/Dockerfile stage 1）
+# Write a liboqs.pc into $HOME/.local/liboqs/lib/pkgconfig (see relay/Dockerfile stage 1)
 make test-relay LIBOQS_PREFIX=$HOME/.local/liboqs
 ```
 
-DB 整合測試（可選）：
+DB integration tests (optional):
 
 ```bash
 docker run -d --rm --name qday-test-pg -e POSTGRES_DB=anchor -e POSTGRES_USER=anchor \
@@ -76,98 +82,121 @@ TEST_DATABASE_URL="postgres://anchor:pw@localhost:5434/anchor?sslmode=disable" \
   make test-relay LIBOQS_PREFIX=...
 ```
 
-## 合約部署（contracts/）
+## Contract deployment (contracts/)
 
 ```bash
 cd contracts
 RELAYER_ADDRESS=0x<relayer EOA> forge script script/Deploy.s.sol \
   --rpc-url $DA_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY --broadcast
-# 部署後把地址填入 .env 的 ANCHOR_REGISTRY_ADDRESS
+# Put the deployed address into ANCHOR_REGISTRY_ADDRESS in .env
 ```
 
-合約以 `evm_version = paris` 編譯（無 PUSH0——DA 鏈 fork 等級未確認前的保守選擇）。
+Contracts are compiled with `evm_version = paris` (no PUSH0 — a conservative choice until the
+DA chain's fork level is confirmed).
 
-## Memo 協議（不可任意變更）
-
-```
-QDAY2ANCHOR|v1|<batchNumber 十進位>|0x<stateRoot 64 位小寫 hex>
-```
-
-Relay（Go `relay/internal/anchor`）與 Portal（TS `portal/lib/memo.ts`）各一份實作，
-共用 golden test 向量。
-
-## 冪等性設計（spec §6.1，逐條對應）
-
-1. **重啟續跑**：worker tick 以 DB 狀態為準，掃描所有非 `DONE`/`FAILED` job。
-2. **不重送**：submit 前若 job 已有 `abel_tx_hash`，先 `getrawtransaction` 查鏈，存在即直接推進。
-3. **寫合約前查 `anchorOf`**：已記錄即推進；revert 後亦會再查一次（區分「已被記錄」與真失敗）。
-4. **雙層防重**：DB `batch_number` / `state_root` UNIQUE + 合約 revert。
-5. **重送同 payload**：memo 由 `(batch, root)` 決定，重送內容必然相同。
-
-## 實作備註（與 spec 的差異／已驗證的 SDK 事實）
-
-全部 SDK 事實來源：`docs/sdk-verified-api.md`（自 SDK 原始碼萃取，含檔案行號）。
-
-- **Aconcagua（TxVersion 3）**：testnet2 已跑 abec Aconcagua 分叉，官方 SDK pin 的舊 abec
-  只認 version 1–2（`ReceiveCoin` 會炸 `Unsupported TxVersion`）。本 repo 升級
-  `abec@main` 並 vendor SDK 於 `relay/third_party/abelian-sdk-go-v2`（go.mod replace），
-  補丁僅兩處：`CreateTransferTxByRootSeed/ByCryptoKeys` 多了開頭 `txVersion` 參數
-  （傳 `wire.TxVersion`）。上游 SDK 更新後可移除 vendor。
-- **固定注資地址**：mnemonic 錢包用 AIP-11 序號 0 的 public randomness 衍生確定性地址
-  （重啟不變）；key-file 錢包無此路徑，退回每次輪換。
-- **短地址 + ANS**：錢包轉帳用短地址（`abe0…`，68 bytes），但錢包靠 ANS 解析短→完整地址，
-  **未註冊的短地址收不到轉帳**。relay 啟動時自動註冊注資地址（`ABEL_ANS_URL`）；
-  portal 產生的測試帳號也自動註冊。
-- **內部 admin API**（`RELAY_ADMIN_ADDR`，預設 :8081）：僅 compose 內網，不對外開 port；
-  portal 過 session 驗證後代理。提供 wallet-address（含短地址）與 generate-account。
-- **真 commit 事件**：`PolygonRollupManager` 的 `VerifyBatchesTrustedAggregator`
-  （topic0 由 ABI 計算並以單元測試 pin 住）。`DA_ROLLUP_ID` 可過濾 indexed rollupID
-  （DB 的 `batch_number` UNIQUE 假設單一 rollup —— 多 rollup 共用 manager 時必填）。
-
-- **`Tx.Confirmations` 不可用**：SDK 結構體 tag 誤植為 `bson`，JSON 永遠解不出來。
-  Confirmer 改用 `getblock` 的 `Block.Confirmations`（tag 正確），或 `tip - height + 1` 回退計算。
-- **AIP-11 參數順序**：`MnemonicsToCryptoSeed` 回傳 `(spend, sn, detector, view)`，
-  但 `NewRootSeedAccount` 收 `(spend, sn, value=view, detector)` —— wallet loader 已做 remap，勿「修正」。
-- **Memo 賦值**：`NewTxDescWithRing` 建構子無 memo 參數，需對 `TxDesc.TxMemo` 欄位賦值（spec F1）。
-- **portal_ro 角色**：密碼不能寫死在 migration SQL，改由 `deploy/initdb/01-portal-ro.sh`
-  （讀環境變數）建角色；migration 0002 只負責 GRANT（既有 cluster 的 fallback 角色為
-  NOLOGIN，需 ops 手動設密碼）。
-- **abel_cursor（migration 0003）／serial_number（migration 0004）**：spec schema 之外的
-  兩個擴充——Abelian 掃描游標（crash-safe 續掃），與 coin serial number 欄位（鏈上花費
-  偵測，對照 `examples/coin` 的 TrackCoins）。
-- **Coinbase output 不掃**：relay 錢包預期由轉帳注資；跳過 coinbase 同時避開 200 塊成熟期（F11）。
-  若必須用挖礦資金，需另外處理成熟期。
-- **Ring 花費時重建、serial 落地**：花費用的 ring 從鏈上重建（`GetRingBlockGroupByHeight`
-  → `BuildCoinRings`）；serial number 於 ring group 湊齊時由 scanner 產生並回填 DB，
-  供 Vin serial 比對偵測花費。ring block group 未湊齊時回報 wait（不消耗 retry 額度）。
-- **交易遺失復原**：confirmer 區分「節點回覆查無此交易」與傳輸層錯誤（後者只重試不重送）；
-  判定遺失後 job 回退 PENDING 且該 job 花掉的 coin 復活回 UNSPENT。
-- **廣播前先落 txid**：簽名後、送出前即把本地算出的 txid 寫入 job，廣播窗口內 crash
-  不會造成重複送出；重啟時殘留的 LOCKED coin 由 submitter 對帳（已上鏈→SPENT，未上鏈→釋放）。
-- **單輸入單找零**：submitter 永遠 1 in / 1 out（找零回自己），SDK 的 Sort* 僅在多 descriptor 時呼叫。
-- **找零地址每次不同**：`RootSeedAccount.GenerateAbelAddress()` 每次產生不同地址（SDK 設計，
-  fresh public randomness）；歸屬判定靠 `ReceiveCoin`（detector key），與地址無關，故無影響。
-
-## 待確認清單（spec §13）
-
-| # | 項目 | 誰確認 | 影響範圍 | 目前預設 |
-|---|------|--------|----------|----------|
-| C1 | ~~DA commit 合約地址 + 事件 ABI~~ ✅ 已確認 | Vike | `PolygonRollupManager` / `VerifyBatchesTrustedAggregator` | 已實作並實測（batch 221 全程 DONE） |
-| C2 | DA RPC endpoint、chain ID、relayer gas 注資 | 團隊夥伴 | `.env` | 空值（啟動時驗證必填） |
-| C3 | Abelian endpoint（testnet/mainnet）與 RPC 憑證 | Morris | `.env` | 空值 |
-| C4 | 錢包形式：mnemonic 或 key material；privacy level | Morris | `.env`（兩種 loader 都已實作） | `pseudonymous` |
-| C5 | Testnet explorer URL | Morris | portal 外連 | mainnet explorer |
-
-另待確認：DA 側 EVM fork 等級（目前合約以 paris 編譯）、`ABEL_TX_FEE_NEUTRINO`（目前對齊官方
-0.1 ABEL 常數；SDK `EstimateTxFee` 實為寫死 1_000_000，見 F8）。
-
-## 目錄結構
+## Memo protocol (must not be changed casually)
 
 ```
-relay/       Go 1.23 relay（cmd/relay + internal/{config,da,abel,registry,store,worker,anchor}）
-contracts/   Foundry：QDayAnchorRegistry + 測試 + Deploy script
-portal/      Next.js 15 後台（唯讀，iron-session 登入）
-deploy/      postgres initdb script（portal_ro 角色）
-docs/        sdk-verified-api.md（SDK 事實來源）、實作計畫
-doc/         原始規格
+QDAY2ANCHOR|v1|<batchNumber decimal>|0x<stateRoot 64 hex chars, lowercase>
+```
+
+The relay (Go, `relay/internal/anchor`) and the portal (TS, `portal/lib/memo.ts`) each carry an
+implementation, sharing the same golden test vectors.
+
+## Idempotency design (spec §6.1, point by point)
+
+1. **Resume after restart**: worker ticks are driven purely by DB state, sweeping every job
+   that is not `DONE`/`FAILED`.
+2. **Never double-send**: before submitting, if the job already has an `abel_tx_hash`, check
+   the chain via `getrawtransaction` first — if the tx exists, advance without resending.
+3. **Check `anchorOf` before writing the contract**: if already recorded, advance; after a
+   revert the contract is checked again (distinguishing "someone recorded it" from a real failure).
+4. **Two-layer duplicate protection**: DB UNIQUE constraints on `batch_number` / `state_root`
+   plus contract-level reverts.
+5. **Resends carry the identical payload**: the memo is a pure function of `(batch, root)`,
+   so a resend is byte-identical by construction.
+
+## Implementation notes (deviations from the spec / verified SDK facts)
+
+Source of truth for all SDK facts: `docs/sdk-verified-api.md` (extracted from SDK source,
+with file/line references).
+
+- **Aconcagua (TxVersion 3)**: testnet2 runs the abec Aconcagua fork; the official SDK pins an
+  older abec that only knows versions 1–2 (`ReceiveCoin` fails with `Unsupported TxVersion`).
+  This repo upgrades to `abec@main` and vendors the SDK at `relay/third_party/abelian-sdk-go-v2`
+  (go.mod replace). The patch is two call sites: `CreateTransferTxByRootSeed/ByCryptoKeys`
+  gained a leading `txVersion` parameter (we pass `wire.TxVersion`). The vendored copy can be
+  dropped once upstream catches up.
+- **Fixed funding address**: mnemonic wallets derive a deterministic address from AIP-11
+  sequence-0 public randomness (stable across restarts); key-file wallets have no such path and
+  fall back to per-request rotation.
+- **Short addresses + ANS**: wallets transfer to the short form (`abe0…`, 68 bytes) but resolve
+  short → full via the Abelian Name Service — **an unregistered short address cannot receive
+  wallet transfers**. The relay auto-registers its funding address at startup (`ABEL_ANS_URL`);
+  test accounts generated in the portal are auto-registered too.
+- **Internal admin API** (`RELAY_ADMIN_ADDR`, default :8081): compose-internal only, never
+  published; the portal proxies to it behind session auth. Provides wallet-address (including
+  the short form) and generate-account.
+- **Real commit event**: `VerifyBatchesTrustedAggregator` on the `PolygonRollupManager`
+  (topic0 computed from the ABI and pinned by a unit test). `DA_ROLLUP_ID` filters the indexed
+  rollupID — the DB's `batch_number` UNIQUE constraint assumes a single rollup, so the filter
+  is mandatory when multiple rollups share one manager.
+- **`Tx.Confirmations` is unusable**: the SDK struct tag says `bson` instead of `json`, so the
+  field never unmarshals. The confirmer uses `Block.Confirmations` from `getblock` (correct tag)
+  or falls back to `tip - height + 1`.
+- **AIP-11 parameter order**: `MnemonicsToCryptoSeed` returns `(spend, sn, detector, view)` but
+  `NewRootSeedAccount` takes `(spend, sn, value=view, detector)` — the wallet loader remaps
+  deliberately; do not "fix" it.
+- **Memo assignment**: the `NewTxDescWithRing` constructor has no memo parameter; the
+  `TxDesc.TxMemo` field is assigned after construction (spec F1).
+- **`portal_ro` role**: the password cannot live in migration SQL, so the role is created by
+  `deploy/initdb/01-portal-ro.sh` (reads env vars); migration 0002 only handles GRANTs (the
+  fallback role on pre-existing clusters is NOLOGIN — ops must set a password manually).
+- **`abel_cursor` (migration 0003) / `serial_number` (migration 0004)**: two extensions beyond
+  the spec schema — a crash-safe Abelian scan cursor, and the coin serial-number column used
+  for on-chain spend detection (mirroring the SDK `examples/coin` TrackCoins flow).
+- **Coinbase outputs are not scanned**: the relay wallet is expected to be funded by transfer;
+  skipping coinbase also sidesteps the 200-block maturity rule (F11). Mining-funded wallets
+  would need explicit maturity handling.
+- **Rings rebuilt at spend time, serials persisted**: the ring needed to spend a coin is rebuilt
+  from chain data (`GetRingBlockGroupByHeight` → `BuildCoinRings`); serial numbers are derived
+  by the scanner once a coin's ring group completes and stored in the DB for Vin-serial spend
+  detection. An incomplete ring group reports "wait" (does not consume the retry budget).
+- **Lost-transaction recovery**: the confirmer distinguishes "node says no such transaction"
+  from transport errors (the latter only retries, never resubmits); once a tx is declared lost,
+  the job rolls back to PENDING and its coins are resurrected to UNSPENT — except coins whose
+  spend was already observed on chain.
+- **Txid persisted before broadcast**: the locally computed txid is written to the job after
+  signing but before sending, so a crash inside the broadcast window cannot cause a
+  double-send; stale LOCKED coins are reconciled by the submitter on restart (on chain → SPENT,
+  not on chain → released).
+- **Single input, single change output**: the submitter always builds 1-in/1-out (change back
+  to itself); the SDK's Sort* helpers are only invoked with multiple descriptors.
+- **Change address differs every time**: `RootSeedAccount.GenerateAbelAddress()` produces a
+  different address per call (SDK design, fresh public randomness); ownership detection is via
+  `ReceiveCoin` (detector key), not address comparison, so this is harmless.
+
+## To-confirm list (spec §13)
+
+| # | Item | Owner | Scope | Current default |
+|---|------|-------|-------|-----------------|
+| C1 | ~~DA commit contract address + event ABI~~ ✅ confirmed | Vike | `PolygonRollupManager` / `VerifyBatchesTrustedAggregator` | Implemented and verified live (batch 221 ran to DONE) |
+| C2 | DA RPC endpoint, chain ID, relayer gas funding | Team | `.env` | empty (validated as required at startup) |
+| C3 | Abelian endpoint (testnet/mainnet) and RPC credentials | Morris | `.env` | empty |
+| C4 | Wallet form: mnemonic or key material; privacy level | Morris | `.env` (both loaders implemented) | `pseudonymous` |
+| C5 | Testnet explorer URL | Morris | portal external links | mainnet explorer |
+
+Also to confirm: the DA chain's EVM fork level (contracts currently compiled for paris), and
+`ABEL_TX_FEE_NEUTRINO` (currently aligned with the official 0.1 ABEL constant; the SDK's
+`EstimateTxFee` is hardcoded to 1_000_000 — see F8).
+
+## Repository layout
+
+```
+relay/       Go 1.23 relay (cmd/relay + internal/{config,da,abel,registry,store,worker,anchor})
+contracts/   Foundry: QDayAnchorRegistry + tests + deploy script
+portal/      Next.js 15 admin portal (read-only, iron-session login)
+deploy/      postgres initdb script (portal_ro role) + server deploy kit (GHCR compose + updater)
+docs/        sdk-verified-api.md (SDK source of truth), implementation plan, deployment records
+doc/         original specification
 ```
