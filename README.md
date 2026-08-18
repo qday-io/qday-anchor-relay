@@ -42,6 +42,92 @@ Only the portal publishes a port; the relay and postgres stay on the internal co
 Migrations are embedded in the relay binary and applied automatically at startup (idempotent) —
 no separate migrate service.
 
+## Environment variables (`.env` reference)
+
+One `.env` is shared by compose across both services. The **relay (committer)** reads everything
+parsed in `relay/internal/config/config.go`; the **portal** reads the portal/admin group. `Required`
+means the relay refuses to start (fails config validation) when it is empty.
+
+### Postgres
+
+| Var | Required | Default | Purpose |
+|---|---|---|---|
+| `POSTGRES_HOST` | no | `postgres` | DB host (compose service name) |
+| `POSTGRES_PORT` | no | `5432` | DB port |
+| `POSTGRES_DB` | no | `anchor` | DB name |
+| `POSTGRES_USER` | no | `anchor` | DB user |
+| `POSTGRES_PASSWORD` | **yes** | — | DB password |
+
+### QDAY DA node (EVM side)
+
+| Var | Required | Default | Purpose |
+|---|---|---|---|
+| `DA_RPC_URL` | **yes** | — | DA node JSON-RPC endpoint |
+| `DA_CHAIN_ID` | **yes** (≠0) | — | DA chain ID (rejected if 0) |
+| `DA_COMMIT_CONTRACT` | **yes** | — | commit contract address (PolygonRollupManager) |
+| `DA_ROLLUP_ID` | no | `0` | `VerifyBatchesTrustedAggregator` rollupID filter; 0 = accept all |
+| `DA_CONFIRM_DEPTH` | no | `12` | DA reorg safety depth |
+| `DA_POLL_INTERVAL_SECONDS` | no | `10` | DA poll interval |
+| `DA_START_BLOCK` | no | `0` | first-run scan start block |
+
+### QDayAnchorRegistry (DA-side EVM)
+
+| Var | Required | Default | Purpose |
+|---|---|---|---|
+| `ANCHOR_REGISTRY_ADDRESS` | **yes** | — | deployed registry address (fill after deploy) |
+| `RELAYER_PRIVATE_KEY` | **yes** | — | DA-side EOA key (gas-funded by the team) |
+
+### Abelian (abec RPC — the coin-scanner / committer path)
+
+> **abec RPC requires HTTP Basic Auth** (realm `abec RPC`). With `ABEL_RPC_USER`/`ABEL_RPC_PASS`
+> empty, the node replies `401 Unauthorized.` (plain text). The SDK then JSON-decodes that body —
+> `401` parses as a number, the next char `U` fails — producing
+> `abel: chain height: invalid character 'U' after top-level value`. Set the credentials to fix it.
+
+| Var | Required | Default | Purpose |
+|---|---|---|---|
+| `ABEL_NETWORK` | no | `testnet` | `mainnet` \| `testnet` \| `regressionnet` \| `simnet` |
+| `ABEL_RPC_ENDPOINT` | **yes** | — | abec RPC endpoint — **confirm with Leo** |
+| `ABEL_RPC_USER` | for auth | empty | abec RPC Basic-Auth user — **confirm with Leo** |
+| `ABEL_RPC_PASS` | for auth | empty | abec RPC Basic-Auth pass — **confirm with Leo** |
+| `ABEL_RPC_TLS_CERT_PATH` | no | empty | only for a self-signed abec cert; leave empty for the public HTTPS/Cloudflare endpoint |
+| `ABEL_CONFIRM_DEPTH` | no | `6` | Abelian confirmation depth |
+| `ABEL_SCAN_START_HEIGHT` | no | `0` | coin-scan start height (set near the funding height to speed cold start) |
+| `ABEL_WALLET_MNEMONIC` | one of the two | empty | AIP-11 mnemonic (space-separated) |
+| `ABEL_WALLET_KEY_FILE` | one of the two | empty | or path to key-material JSON |
+| `ABEL_ACCOUNT_PRIVACY` | no | `pseudonymous` | `pseudonymous` \| `full-privacy` |
+| `ABEL_TX_FEE_NEUTRINO` | no | `1000000` | tx fee in Neutrino (≈ official 0.1 ABEL) |
+| `ABEL_ANS_URL` | no | empty | Abelian Name Service base; empty disables short-address registration |
+
+> Wallet: **exactly one** of `ABEL_WALLET_MNEMONIC` or `ABEL_WALLET_KEY_FILE` must be set, or the
+> relay fails to start.
+
+### Relay behavior
+
+| Var | Required | Default | Purpose |
+|---|---|---|---|
+| `RETRY_MAX` | no | `5` | max retries per operation |
+| `RETRY_BACKOFF_BASE_SECONDS` | no | `30` | exponential-backoff base |
+| `RELAY_ADMIN_ADDR` | no | `127.0.0.1:8081` | internal admin API listen addr (compose sets `:8081`; do not expose) |
+
+### Portal (admin UI — portal service, not the relay)
+
+| Var | Required | Default | Purpose |
+|---|---|---|---|
+| `PORTAL_DB_USER` / `PORTAL_DB_PASSWORD` | portal | — | read-only DB account (created by `deploy/initdb`) |
+| `PORTAL_PORT` | portal | `3000` | portal HTTP port (the only published port) |
+| `ADMIN_USERNAME` | portal | `admin` | portal login user |
+| `ADMIN_PASSWORD_HASH` | portal | — | bcrypt hash (`node -e "console.log(require('bcryptjs').hashSync('pw',12))"`) |
+| `SESSION_SECRET` | portal | — | session secret, ≥32 random bytes (`openssl rand -hex 32`) |
+| `ABEL_EXPLORER_BASE` | portal | mainnet explorer | Abelian explorer base for links (set testnet URL on testnet) |
+| `DA_EXPLORER_BASE` | portal | empty | DA-side explorer base, if any |
+| `TRUST_PROXY_HEADERS` | portal | `false` | `true` only behind a trusted reverse proxy (per-IP login rate-limit via `X-Forwarded-For`) |
+| `SESSION_COOKIE_SECURE` | portal | empty | set `false` for plain-HTTP (non-localhost) deploys, else the browser drops the session cookie; leave empty with HTTPS |
+
+> **Secrets:** never commit real credentials. Keep `ABEL_RPC_USER`/`ABEL_RPC_PASS`,
+> `RELAYER_PRIVATE_KEY`, wallet material, and `SESSION_SECRET` only in the server `.env`
+> (`.env` is git-ignored; `.env.example` holds placeholders).
+
 ## Make targets
 
 | target | purpose |
@@ -182,7 +268,7 @@ with file/line references).
 |---|------|-------|-------|-----------------|
 | C1 | ~~DA commit contract address + event ABI~~ ✅ confirmed | Vike | `PolygonRollupManager` / `VerifyBatchesTrustedAggregator` | Implemented and verified live (batch 221 ran to DONE) |
 | C2 | DA RPC endpoint, chain ID, relayer gas funding | Team | `.env` | empty (validated as required at startup) |
-| C3 | Abelian endpoint (testnet/mainnet) and RPC credentials | Morris | `.env` | empty |
+| C3 | Abelian endpoint (testnet/mainnet) + abec RPC Basic-Auth user/pass (`ABEL_RPC_ENDPOINT`/`ABEL_RPC_USER`/`ABEL_RPC_PASS`) | Leo | `.env` | empty → `401`/`'U'` parse error until set |
 | C4 | Wallet form: mnemonic or key material; privacy level | Morris | `.env` (both loaders implemented) | `pseudonymous` |
 | C5 | Testnet explorer URL | Morris | portal external links | mainnet explorer |
 
